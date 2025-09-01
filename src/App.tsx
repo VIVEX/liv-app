@@ -1,44 +1,67 @@
-import { useState } from "react";
-import { Button } from "./components/ui/button";
-import { Input } from "./components/ui/input";
-import { Textarea } from "./components/ui/textarea";
-import { Card, CardContent } from "./components/ui/card";
-import { Avatar, AvatarImage, AvatarFallback } from "./components/ui/avatar";
+import { useEffect, useState } from "react";
+import { supabase } from "./lib/supabaseClient";
+import Auth from "./components/Auth";
+
+type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"];
 
 export default function App() {
-  const [posts, setPosts] = useState([
-    { id: 1, name: "Andre", city: "Stockholm", text: "Healthy is Wealthy", avatar: "" }
-  ]);
+  const [session, setSession] = useState<Session>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // pega sessão atual
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setLoading(false);
+    });
+
+    // escuta mudanças (login/logout)
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+
+    return () => {
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  if (loading) {
+    return <div className="p-6">Carregando…</div>;
+  }
+
+  if (!session) {
+    // não logado → mostra tela de login
+    return (
+      <div className="min-h-screen grid place-items-center">
+        <Auth />
+      </div>
+    );
+  }
+
+  // logado → tela básica
+  const user = session.user;
 
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-10 bg-white border-b">
-        <div className="max-w-screen-sm mx-auto h-14 flex items-center justify-between px-4">
-          <div className="font-bold">LIV</div>
-        </div>
+    <div className="max-w-2xl mx-auto p-6 space-y-6">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">LIV</h1>
+        <button
+          onClick={() => supabase.auth.signOut()}
+          className="rounded-xl px-3 py-2 border"
+        >
+          Sair
+        </button>
       </header>
 
-      {/* Feed */}
-      <main className="flex-1 overflow-y-auto p-4 space-y-3">
-        {posts.map((p) => (
-          <Card key={p.id} className="rounded-2xl">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar className="w-8 h-8">
-                  <AvatarImage src={p.avatar} />
-                  <AvatarFallback>{p.name[0]}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-semibold text-sm">{p.name}</p>
-                  <p className="text-xs text-gray-500">{p.city}</p>
-                </div>
-              </div>
-              <p>{p.text}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </main>
+      <div className="rounded-2xl border p-4">
+        <p className="text-sm text-gray-500">Logado como:</p>
+        <p className="font-medium">{user.email}</p>
+      </div>
+
+      <div className="rounded-2xl border p-6">
+        <h2 className="font-semibold mb-2">Feed (em breve)</h2>
+        <p>Agora que o login funciona, vamos conectar o Feed ao Supabase.</p>
+      </div>
     </div>
   );
 }
