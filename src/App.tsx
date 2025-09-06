@@ -64,6 +64,8 @@ export default function App() {
   {posts.map((p) => (
     <article key={p.id} className="border rounded p-3">
       <div className="text-xs opacity-70">
+        <strong>{p.profiles?.full_name ?? 'Usuário'}</strong>
+  <br />
         {/* nome do autor */}
         {p.profiles?.full_name ?? 'Usuário'} •{' '}
         {/* data formatada */}
@@ -80,25 +82,6 @@ export default function App() {
     </article>
   ))}
 </section>
-
-
-const { data, error } = await supabase
-  .from('posts')
-  .select(`
-    id,
-    user_id,
-    caption,
-    media_url,
-    created_at,
-    profiles!inner ( full_name )
-  `)
-  .order('created_at', { ascending: false })
-  .limit(20);
-      
-          </article>
-        ))}
-      </section>
-    </main>
   );
 }
 
