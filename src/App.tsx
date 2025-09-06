@@ -9,6 +9,7 @@ type Post = {
   caption: string | null;
   media_url: string | null;
   created_at: string;
+  profiles?: { full_name: string | null }; // <- aqui
 };
 
 export default function App() {
@@ -39,12 +40,15 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from('posts').insert({
-      user_id: user.id,
-      caption: caption || null,
-      media_url: mediaUrl || null,
-    });
-
+   const { data, error } = await supabase
+  .from('posts')
+  .select(`
+    id, user_id, caption, media_url, created_at,
+    profiles!inner ( full_name )
+  `)
+  .order('created_at', { ascending: false })
+  .limit(20);
+    
     if (error) {
       alert(error.message);
     } else {
