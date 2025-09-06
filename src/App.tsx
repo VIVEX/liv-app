@@ -1,67 +1,91 @@
-import { useEffect, useState } from "react";
-import { supabase } from "./lib/supabaseClient";
-import Auth from "./components/Auth";
+'use client';
 
-type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"];
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
-export default function App() {
-  const [session, setSession] = useState<Session>(null);
-  const [loading, setLoading] = useState(true);
+type Post = {
+  id: string;
+  user_id: string;
+  caption: string | null;
+  media_url: string | null;
+  created_at: string;
+};
 
+export default function Feed() {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [caption, setCaption] = useState('');
+  const [mediaUrl, setMediaUrl] = useState('');
+
+  // Buscar posts
   useEffect(() => {
-    // pega sessão atual
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    const load = async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('id,user_id,caption,media_url,created_at')
+        .order('created_at', { ascending: false })
+        .limit(20);
 
-    // escuta mudanças (login/logout)
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
-
-    return () => {
-      sub.subscription.unsubscribe();
+      if (!error && data) setPosts(data);
     };
+    load();
   }, []);
 
-  if (loading) {
-    return <div className="p-6">Carregando…</div>;
-  }
+  // Criar novo post
+  const createPost = async () => {
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    if (!user) {
+      alert('Faça login para postar.');
+      return;
+    }
 
-  if (!session) {
-    // não logado → mostra tela de login
-    return (
-      <div className="min-h-screen grid place-items-center">
-        <Auth />
-      </div>
-    );
-  }
+    const { error } = await supabase.from('posts').insert({
+      user_id: user.id,
+      caption: caption || null,
+      media_url: mediaUrl || null,
+    });
 
-  // logado → tela básica
-  const user = session.user;
+    if (error) {
+      alert(error.message);
+    } else {
+      setCaption('');
+      setMediaUrl('');
+      window.location.reload(); // recarrega para ver o novo post
+    }
+  };
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">LIV</h1>
-        <button
-          onClick={() => supabase.auth.signOut()}
-          className="rounded-xl px-3 py-2 border"
-        >
-          Sair
+    <main className="max-w-xl mx-auto p-4 space-y-6">
+      <section className="space-y-2">
+        <input
+          className="w-full border rounded p-2"
+          placeholder="Legenda"
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+        />
+        <input
+          className="w-full border rounded p-2"
+          placeholder="URL da imagem (opcional)"
+          value={mediaUrl}
+          onChange={(e) => setMediaUrl(e.target.value)}
+        />
+        <button className="border rounded px-4 py-2" onClick={createPost}>
+          Postar
         </button>
-      </header>
+      </section>
 
-      <div className="rounded-2xl border p-4">
-        <p className="text-sm text-gray-500">Logado como:</p>
-        <p className="font-medium">{user.email}</p>
-      </div>
-
-      <div className="rounded-2xl border p-6">
-        <h2 className="font-semibold mb-2">Feed (em breve)</h2>
-        <p>Agora que o login funciona, vamos conectar o Feed ao Supabase.</p>
-      </div>
-    </div>
+      <section className="space-y-4">
+        {posts.map((p) => (
+          <article key={p.id} className="border rounded p-3">
+            <div className="text-xs opacity-70">
+              {new Date(p.created_at).toLocaleString()}
+            </div>
+            {p.media_url && <img src={p.media_url} alt="" className="mt-2 rounded" />}
+            {p.caption && <p className="mt-2">{p.caption}</p>}
+          </article>
+        ))}
+      </section>
+    </main>
   );
 }
+
