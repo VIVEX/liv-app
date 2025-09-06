@@ -1,8 +1,11 @@
-// src/lib/supabaseClient.ts
-import { createClient } from '@supabase/supabase-js'
+'use client';
 
-// Pegamos as variáveis que você configurou no Vercel
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+import { createClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    auth: { persistSession: true },
+  }
+);
