@@ -78,7 +78,7 @@ export default function App() {
         </button>
       </section>
 
-     const { data, error } = await supabase
+const { data, error } = await supabase
   .from('posts')
   .select(`
     id,
@@ -90,6 +90,7 @@ export default function App() {
   `)
   .order('created_at', { ascending: false })
   .limit(20);
+      
           </article>
         ))}
       </section>
