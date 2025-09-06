@@ -16,37 +16,47 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [caption, setCaption] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Mostrar status do usuário (debug)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      setUserEmail(data.user?.email ?? null);
+      console.log('[DEBUG] user:', data.user);
+    })();
+  }, []);
 
   // Buscar posts
   useEffect(() => {
-    const load = async () => {
+    (async () => {
       const { data, error } = await supabase
         .from('posts')
-        .select(
-          `
+        .select(`
           id,
           user_id,
           caption,
           media_url,
           created_at,
           profiles!inner ( full_name )
-        `
-        )
+        `)
         .order('created_at', { ascending: false })
         .limit(20);
 
+    if (error) console.error('[DEBUG] load posts error:', error);
       if (!error && data) setPosts(data as Post[]);
-    };
-
-    load();
+    })();
   }, []);
 
   // Criar novo post
   const createPost = async () => {
+    console.log('[DEBUG] createPost start');
     const { data: userData } = await supabase.auth.getUser();
     const user = userData?.user;
+    console.log('[DEBUG] current user:', user);
+
     if (!user) {
-      alert('Faça login para postar.');
+      window.alert('Faça login para postar.');
       return;
     }
 
@@ -57,17 +67,22 @@ export default function App() {
     });
 
     if (error) {
-      alert(error.message);
+      console.error('[DEBUG] insert error:', error);
+      window.alert(error.message);
     } else {
       setCaption('');
       setMediaUrl('');
-      // recarrega para ver o novo post simples (ou você pode fazer um prepend no estado)
       window.location.reload();
     }
   };
 
   return (
     <main className="max-w-xl mx-auto p-4 space-y-6">
+      {/* Status do usuário (debug) */}
+      <div className="text-xs opacity-70">
+        {userEmail ? `Logado como: ${userEmail}` : 'Não logado'}
+      </div>
+
       <section className="space-y-2">
         <input
           className="w-full border rounded p-2"
