@@ -78,14 +78,18 @@ export default function App() {
         </button>
       </section>
 
-      <section className="space-y-4">
-        {posts.map((p) => (
-          <article key={p.id} className="border rounded p-3">
-            <div className="text-xs opacity-70">
-              {new Date(p.created_at).toLocaleString()}
-            </div>
-            {p.media_url && <img src={p.media_url} alt="" className="mt-2 rounded" />}
-            {p.caption && <p className="mt-2">{p.caption}</p>}
+     const { data, error } = await supabase
+  .from('posts')
+  .select(`
+    id,
+    user_id,
+    caption,
+    media_url,
+    created_at,
+    profiles!inner ( full_name )
+  `)
+  .order('created_at', { ascending: false })
+  .limit(20);
           </article>
         ))}
       </section>
