@@ -11,7 +11,7 @@ type Post = {
   created_at: string;
 };
 
-export default function Feed() {
+export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [caption, setCaption] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
