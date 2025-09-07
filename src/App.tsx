@@ -9,160 +9,156 @@ type Post = {
   caption: string | null;
   media_url: string | null;
   created_at: string;
-  profiles?: { full_name: string | null };
+  profiles?: { full_name: string | null }; // vem do join com profiles
 };
 
 export default function App() {
-  const [userId, setUserId] = useState<string | null>(null);
-  const [email, setEmail] = useState('');
   const [posts, setPosts] = useState<Post[]>([]);
   const [caption, setCaption] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // === Sessão / auth listener ===
+  // ---- Auth: mostrar email/logado e permitir login/logout
   useEffect(() => {
-    const loadSession = async () => {
+    (async () => {
       const { data } = await supabase.auth.getUser();
-      setUserId(data.user?.id ?? null);
-    };
-    loadSession();
+      setUserEmail(data.user?.email ?? null);
+    })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? null);
+    // atualiza estado quando a sessão mudar
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUserEmail(session?.user?.email ?? null);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // === Buscar posts (requer login com suas políticas atuais) ===
-  const loadPosts = async () => {
-    const { data, error } = await supabase
-      .from('posts')
-      .select(`
-        id,
-        user_id,
-        caption,
-        media_url,
-        created_at,
-        profiles:profiles!posts_user_id_fkey ( full_name )
-      `)
-      .order('created_at', { ascending: false })
-      .limit(20);
+  const handleLogin = async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  };
 
-    if (error) {
-      console.debug('[DEBUG] load posts error:', error);
-      return;
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUserEmail(null);
+  };
+
+  // ---- Carregar posts
+  const load = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(
+          `
+          id,
+          user_id,
+          caption,
+          media_url,
+          created_at,
+          profiles!inner ( full_name )
+        `
+        )
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      setPosts(data as Post[]);
+      console.debug('[DEBUG] loaded posts:', data);
+    } catch (err) {
+      console.error('[DEBUG] load posts error:', err);
+      alert('Erro ao carregar posts.');
     }
-    setPosts(data ?? []);
   };
 
   useEffect(() => {
-    // só tenta carregar se estiver logado (com suas políticas)
-    if (userId) loadPosts();
-  }, [userId]);
+    load();
+  }, []);
 
-  // === Login via magic link (OTP) ===
-  const login = async () => {
-    if (!email) {
-      alert('Informe seu email');
-      return;
-    }
-    const { error } = await supabase.auth.signInWithOtp({ email });
-    if (error) alert(error.message);
-    else alert('Enviamos um link/OTP para seu email. Verifique sua caixa de entrada.');
-  };
-
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setPosts([]);
-  };
-
-  // === Criar Post ===
+  // ---- Criar novo post
   const createPost = async () => {
+    console.debug('[DEBUG] createPost start');
     const { data: userData } = await supabase.auth.getUser();
     const user = userData?.user;
+
     if (!user) {
       alert('Faça login para postar.');
       return;
     }
-    const { error } = await supabase.from('posts').insert({
-      user_id: user.id,
-      caption: caption || null,
-      media_url: mediaUrl || null,
-    });
-    if (error) alert(error.message);
-    else {
+
+    try {
+      const { error } = await supabase.from('posts').insert({
+        user_id: user.id,
+        caption: caption || null,
+        media_url: mediaUrl || null,
+      });
+
+      if (error) throw error;
+
       setCaption('');
       setMediaUrl('');
-      loadPosts(); // recarrega feed
+      await load(); // recarrega lista sem refresh da página
+    } catch (err: any) {
+      console.error('[DEBUG] createPost error:', err);
+      alert(err.message ?? 'Erro ao criar post.');
     }
   };
 
   return (
     <main className="max-w-xl mx-auto p-4 space-y-6">
-      {/* Header Auth */}
-      <section className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">LIV Feed</h1>
-        {userId ? (
-          <button className="border rounded px-3 py-1" onClick={logout}>
-            Sair
-          </button>
-        ) : null}
+      {/* Header com login/logout */}
+      <header className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">LIV</h1>
+        <div className="text-sm">
+          {userEmail ? (
+            <div className="flex items-center gap-2">
+              <span className="opacity-70">{userEmail}</span>
+              <button className="border rounded px-3 py-1" onClick={handleLogout}>
+                Sair
+              </button>
+            </div>
+          ) : (
+            <button className="border rounded px-3 py-1" onClick={handleLogin}>
+              Entrar com Google
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Formulário */}
+      <section className="space-y-2">
+        <input
+          className="w-full border rounded p-2"
+          placeholder="Legenda"
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+        />
+
+        <input
+          className="w-full border rounded p-2"
+          placeholder="URL da imagem (opcional)"
+          value={mediaUrl}
+          onChange={(e) => setMediaUrl(e.target.value)}
+        />
+
+        <button className="border rounded px-4 py-2" onClick={createPost}>
+          Postar
+        </button>
       </section>
 
-      {/* Login (se não logado) */}
-      {!userId && (
-        <section className="space-y-2 border rounded p-3">
-          <p className="text-sm">Entre para ver e postar no feed</p>
-          <input
-            className="w-full border rounded p-2"
-            type="email"
-            placeholder="Seu email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <button className="border rounded px-4 py-2" onClick={login}>
-            Entrar com email
-          </button>
-        </section>
-      )}
+      {/* Lista de posts */}
+      <section className="space-y-4">
+        {posts.map((p) => (
+          <article key={p.id} className="border rounded p-3">
+            <div className="text-xs opacity-70">
+              <strong>{p.profiles?.full_name ?? 'Usuário'}</strong>
+              <br />
+              {new Date(p.created_at).toLocaleString('pt-BR')}
+            </div>
 
-      {/* Form de novo post (somente logado) */}
-      {userId && (
-        <section className="space-y-2">
-          <input
-            className="w-full border rounded p-2"
-            placeholder="Legenda"
-            value={caption}
-            onChange={(e) => setCaption(e.target.value)}
-          />
-          <input
-            className="w-full border rounded p-2"
-            placeholder="URL da imagem (opcional)"
-            value={mediaUrl}
-            onChange={(e) => setMediaUrl(e.target.value)}
-          />
-          <button className="border rounded px-4 py-2" onClick={createPost}>
-            Postar
-          </button>
-        </section>
-      )}
+            {p.media_url && <img src={p.media_url} alt="" className="mt-2 rounded" />}
 
-      {/* Feed (mostra após login com suas políticas atuais) */}
-      {userId && (
-        <section className="space-y-4">
-          {posts.map((p) => (
-            <article key={p.id} className="border rounded p-3">
-              <div className="text-xs opacity-70">
-                <strong>{p.profiles?.full_name ?? 'Usuário'}</strong>
-                <br />
-                {new Date(p.created_at).toLocaleString('pt-BR')}
-              </div>
-              {p.media_url && <img src={p.media_url} alt="" className="mt-2 rounded" />}
-              {p.caption && <p className="mt-2">{p.caption}</p>}
-            </article>
-          ))}
-        </section>
-      )}
+            {p.caption && <p className="mt-2">{p.caption}</p>}
+          </article>
+        ))}
+      </section>
     </main>
   );
 }
