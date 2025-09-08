@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -9,19 +10,44 @@ type Post = {
   caption: string | null;
   media_url: string | null;
   created_at: string;
-  profiles?: { full_name: string | null };
+  profiles?: { full_name: string | null } | null;
 };
 
 export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [caption, setCaption] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
-  const [email, setEmail] = useState(''); // para magic link
-  const [userId, setUserId] = useState<string | null>(null);
+  const [emailForMagicLink, setEmailForMagicLink] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  // Carregar posts e checar usuário
+  // Ler usuário atual e carregar posts
   useEffect(() => {
-    const load = async () => {
+    const init = async () => {
+      // usuário atual
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData?.user ?? null;
+      setCurrentUserEmail(user?.email ?? null);
+
+      // carregar posts
+      await loadPosts();
+    };
+    init();
+
+    // Atualizar quando mudar sessão
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      setCurrentUserEmail(userData.user?.email ?? null);
+      await loadPosts();
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const loadPosts = async () => {
+    try {
       const { data, error } = await supabase
         .from('posts')
         .select(`
@@ -30,126 +56,125 @@ export default function App() {
           caption,
           media_url,
           created_at,
-          profiles:profiles!posts_user_id_fkey ( full_name )
+          profiles:profiles ( full_name )
         `)
         .order('created_at', { ascending: false })
         .limit(20);
 
-      if (!error && data) setPosts(data);
-    };
-
-    const checkUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      setUserId(data.user?.id ?? null);
-      console.debug('[DEBUG] user:', data.user?.id ?? null);
-    };
-
-    load();
-    checkUser();
-
-    // Atualiza estado em mudanças de auth
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) => {
-      setUserId(session?.user?.id ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Login com Magic Link
-  const loginWithMagicLink = async () => {
-    if (!email) {
-      alert('Digite seu e-mail para receber o link.');
-      return;
+      if (error) throw error;
+      setPosts(data || []);
+      console.debug('[DEBUG] posts:', data);
+    } catch (err) {
+      console.debug('[DEBUG] load posts error:', err);
+      alert('Erro ao carregar posts. Veja o console.');
     }
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: window.location.origin, // volta para seu app
-      },
-    });
-    if (error) alert(error.message);
-    else alert('Enviamos um link de login para seu e-mail.');
   };
 
-  // (Opcional) Login com Google – só vai funcionar após habilitar o provider
-  const loginWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-    if (error) alert(error.message);
-  };
-
-  // Logout
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setUserId(null);
-    alert('Você saiu.');
-  };
-
-  // Criar novo post
   const createPost = async () => {
     console.debug('[DEBUG] createPost start');
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData?.user;
-    console.debug('[DEBUG] current user:', user?.id ?? null);
+    setLoading(true);
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData?.user;
+      console.debug('[DEBUG] current user:', user);
 
-    if (!user) {
-      alert('Faça login para postar.');
-      return;
-    }
+      if (!user) {
+        alert('Faça login para postar.');
+        return;
+      }
 
-    const { error } = await supabase.from('posts').insert({
-      user_id: user.id,
-      caption: caption || null,
-      media_url: mediaUrl || null,
-    });
+      // garante que existe profile (full_name) para este usuário
+      // (caso o trigger não tenha criado)
+      await supabase
+        .from('profiles')
+        .upsert({ id: user.id, full_name: user.user_metadata?.full_name || 'Usuário' });
 
-    if (error) {
-      alert(error.message);
-    } else {
+      const { error } = await supabase.from('posts').insert({
+        user_id: user.id,
+        caption: caption || null,
+        media_url: mediaUrl || null,
+      });
+
+      if (error) throw error;
+
       setCaption('');
       setMediaUrl('');
-      window.location.reload(); // simples para ver o novo post
+      await loadPosts();
+    } catch (err: any) {
+      alert(err?.message ?? 'Erro ao criar post.');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  // Login com Google (recomendado)
+  const signInWithGoogle = async () => {
+    const redirectTo = window.location.origin; // volta pro app após login
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo },
+    });
+    if (error) alert(error.message);
+  };
+
+  // Magic Link por e-mail (alternativa rápida)
+  const signInWithEmail = async () => {
+    if (!emailForMagicLink) {
+      alert('Digite um e-mail.');
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOtp({
+      email: emailForMagicLink,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    if (error) alert(error.message);
+    else alert('Enviamos um link de login para seu e-mail ✔️');
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setCurrentUserEmail(null);
+    await loadPosts();
   };
 
   return (
     <main className="max-w-xl mx-auto p-4 space-y-6">
-      {/* Barra de login rápido */}
-      <section className="space-y-2 border rounded p-3">
-        <div className="text-sm opacity-70">
-          {userId ? `Logado: ${userId}` : 'Não logado'}
+      {/* Barra de login/logout */}
+      <section className="space-y-3">
+        <div className="text-sm">
+          {currentUserEmail ? (
+            <span>Logado como <strong>{currentUserEmail}</strong></span>
+          ) : (
+            <span>Não logado</span>
+          )}
         </div>
 
-        <div className="flex gap-2 items-center">
-          <input
-            className="w-full border rounded p-2"
-            placeholder="Seu e-mail (Magic Link)"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <button className="border rounded px-3 py-2" onClick={loginWithMagicLink}>
-            Entrar por e-mail
-          </button>
-        </div>
+        {!currentUserEmail ? (
+          <div className="flex flex-col gap-2">
+            <button className="border rounded px-4 py-2" onClick={signInWithGoogle}>
+              Entrar com Google
+            </button>
 
-        <div className="flex gap-2">
-          <button className="border rounded px-3 py-2" onClick={loginWithGoogle}>
-            Entrar com Google
-          </button>
-          <button className="border rounded px-3 py-2" onClick={logout}>
+            <div className="flex gap-2">
+              <input
+                className="w-full border rounded p-2"
+                placeholder="Seu e-mail (magic link)"
+                value={emailForMagicLink}
+                onChange={(e) => setEmailForMagicLink(e.target.value)}
+              />
+              <button className="border rounded px-4 py-2" onClick={signInWithEmail}>
+                Entrar por e-mail
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button className="border rounded px-4 py-2" onClick={signOut}>
             Sair
           </button>
-        </div>
+        )}
       </section>
 
-      {/* Form de post */}
+      {/* Form de novo post */}
       <section className="space-y-2">
         <input
           className="w-full border rounded p-2"
@@ -163,8 +188,12 @@ export default function App() {
           value={mediaUrl}
           onChange={(e) => setMediaUrl(e.target.value)}
         />
-        <button className="border rounded px-4 py-2" onClick={createPost}>
-          Postar
+        <button
+          className="border rounded px-4 py-2"
+          onClick={createPost}
+          disabled={loading}
+        >
+          {loading ? 'Postando…' : 'Postar'}
         </button>
       </section>
 
@@ -173,11 +202,14 @@ export default function App() {
         {posts.map((p) => (
           <article key={p.id} className="border rounded p-3">
             <div className="text-xs opacity-70">
-              <strong>{p.profiles?.full_name ?? 'Usuário'}</strong> ·{' '}
+              <strong>{p.profiles?.full_name ?? 'Usuário'}</strong>
+              <br />
               {new Date(p.created_at).toLocaleString('pt-BR')}
             </div>
 
-            {p.media_url && <img src={p.media_url} alt="" className="mt-2 rounded" />}
+            {p.media_url && (
+              <img src={p.media_url} alt="" className="mt-2 rounded" />
+            )}
 
             {p.caption && <p className="mt-2">{p.caption}</p>}
           </article>
@@ -186,4 +218,15 @@ export default function App() {
     </main>
   );
 }
+Observações importantes:
 
+Seu supabaseClient.ts já deve estar assim (com Vite) e persistSession: true:
+
+ts
+Copiar código
+import { createClient } from '@supabase/supabase-js';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true },
+});
