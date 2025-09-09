@@ -1,397 +1,502 @@
 // src/App.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import supabase from "./lib/supabaseClient";
+import {
+  Home,
+  Search,
+  PlusSquare,
+  Clapperboard,
+  User2,
+  LogOut,
+  Camera,
+  Heart,
+  MessageCircle,
+} from "lucide-react";
 
-// ====== Tipos ======
-type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"];
-
-type Profile = {
-  id: string;
-  full_name: string | null;
-  username: string | null;
-  avatar_url: string | null;
-  bio: string | null;
-  created_at: string;
-};
-
+// ===== Tipos =====
 type Post = {
   id: string;
   user_id: string;
-  media_url: string | null;
+  media_url: string;
   caption: string | null;
   media_type: "image" | "video";
   created_at: string;
-  author?: Pick<Profile, "id" | "full_name" | "username" | "avatar_url">;
+  profiles?: Profile;
 };
 
-// ====== Util ======
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleString([], { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-
-const classNames = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
-
-const getFileMediaType = (file: File): "image" | "video" => {
-  return file.type.startsWith("video") ? "video" : "image";
+type Profile = {
+  id: string;
+  username: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  bio: string | null;
 };
 
-// ====== Componentes pequenos ======
-function Avatar({ src, alt, size = 72 }: { src?: string | null; alt: string; size?: number }) {
-  const url = src || `https://ui-avatars.com/api/?name=${encodeURIComponent(alt || "U")}&background=eee&color=555&bold=true`;
+// ===== Helpers =====
+async function ensureProfile(sessionUserId: string, email?: string | null) {
+  const { data } = await supabase
+    .from("profiles")
+    .select("id, username")
+    .eq("id", sessionUserId)
+    .maybeSingle();
+
+  if (!data) {
+    const base = (email ?? "user").split("@")[0].replace(/[^a-z0-9_]/gi, "").toLowerCase() || "user";
+    // tenta @base, @base1, @base2...
+    let username = base;
+    for (let i = 0; i < 50; i++) {
+      const check = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("username", username)
+        .maybeSingle();
+      if (!check.data) break;
+      username = `${base}${i + 1}`;
+    }
+    await supabase.from("profiles").insert({ id: sessionUserId, username });
+  }
+}
+
+function cn(...cls: (string | false | null | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
+}
+
+async function uploadToStorage(opts: {
+  file: File;
+  path: string; // dentro do bucket
+  bucket?: string; // default "media"
+}) {
+  const bucket = opts.bucket ?? "media";
+  const { error } = await supabase.storage.from(bucket).upload(opts.path, opts.file, {
+    upsert: true, // permite trocar avatar
+    cacheControl: "3600",
+  });
+  if (error) throw error;
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(opts.path);
+  return pub.publicUrl;
+}
+
+function isVideoFile(f: File) {
+  return /^video\//.test(f.type) || /\.(mp4|mov|webm)$/i.test(f.name);
+}
+
+// ====== App ======
+export default function App() {
+  const [tab, setTab] = useState<"home" | "search" | "create" | "reels" | "profile">("home");
+  const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
+  const [me, setMe] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    // sessão atual + listener
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+    });
+    const sub = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s ?? null);
+    });
+    return () => sub.data.subscription.unsubscribe();
+  }, []);
+
+  // carrega/garante profile
+  useEffect(() => {
+    (async () => {
+      if (!session?.user) return;
+      await ensureProfile(session.user.id, session.user.email);
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", session.user.id)
+        .single();
+      setMe(data as Profile);
+    })();
+  }, [session?.user?.id]);
+
+  if (!session) {
+    return <LoginScreen />;
+  }
+
   return (
-    <img
-      src={url}
-      alt={alt}
-      width={size}
-      height={size}
-      className="rounded-full object-cover border border-zinc-200"
-      style={{ width: size, height: size }}
-    />
+    <div className="min-h-screen bg-neutral-50">
+      <TopBar onLogout={async () => supabase.auth.signOut()} />
+
+      {tab === "home" && <Feed me={me} />}
+      {tab === "search" && <SearchPage />}
+      {tab === "create" && <CreatePost onDone={() => setTab("home")} me={me} />}
+      {tab === "reels" && <ReelsPage />}
+      {tab === "profile" && <ProfilePage me={me} refreshMe={setMe} />}
+
+      <BottomNav current={tab} onChange={setTab} />
+    </div>
   );
 }
 
-function BottomNav({ tab, onTab }: { tab: "feed" | "profile"; onTab: (t: "feed" | "profile") => void }) {
+// ===== Login =====
+function LoginScreen() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-10 backdrop-blur bg-white/80 border-t">
-      <div className="mx-auto max-w-xl grid grid-cols-2">
+    <div className="min-h-screen grid place-items-center bg-neutral-50">
+      <div className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-8 shadow-sm">
+        <h1 className="text-3xl font-bold text-center tracking-tight">LIV</h1>
+        <p className="text-center text-neutral-500 mt-2">
+          Compartilhe sua vida saudável
+        </p>
         <button
-          onClick={() => onTab("feed")}
-          className={classNames(
-            "py-3 text-sm font-medium",
-            tab === "feed" ? "text-black" : "text-zinc-500"
-          )}
+          className="mt-8 w-full rounded-xl bg-neutral-900 text-white py-3 font-medium hover:bg-black"
+          onClick={async () => {
+            await supabase.auth.signInWithOAuth({
+              provider: "google",
+              options: { queryParams: { prompt: "select_account" } },
+            });
+          }}
         >
-          Feed
+          Entrar com Google
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ===== Layout Pieces =====
+function TopBar({ onLogout }: { onLogout: () => void }) {
+  return (
+    <header className="sticky top-0 z-10 bg-white border-b border-neutral-200">
+      <div className="max-w-3xl mx-auto h-14 flex items-center justify-between px-4">
+        <div className="font-extrabold tracking-tight">LIV</div>
         <button
-          onClick={() => onTab("profile")}
-          className={classNames(
-            "py-3 text-sm font-medium",
-            tab === "profile" ? "text-black" : "text-zinc-500"
-          )}
+          onClick={onLogout}
+          className="text-neutral-500 hover:text-neutral-800 rounded-lg px-2 py-1"
+          title="Sair"
         >
-          Perfil
+          <LogOut size={18} />
         </button>
+      </div>
+    </header>
+  );
+}
+
+function BottomNav({
+  current,
+  onChange,
+}: {
+  current: "home" | "search" | "create" | "reels" | "profile";
+  onChange: (t: typeof current) => void;
+}) {
+  const Item = ({
+    id,
+    icon,
+    label,
+  }: {
+    id: typeof current;
+    icon: JSX.Element;
+    label: string;
+  }) => (
+    <button
+      className={cn(
+        "flex-1 py-3 flex items-center justify-center gap-2 text-sm",
+        current === id ? "text-neutral-900" : "text-neutral-400"
+      )}
+      onClick={() => onChange(id)}
+      aria-label={label}
+    >
+      {icon}
+    </button>
+  );
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-200">
+      <div className="max-w-3xl mx-auto flex">
+        <Item id="home" icon={<Home />} label="Home" />
+        <Item id="search" icon={<Search />} label="Buscar" />
+        <Item id="create" icon={<PlusSquare />} label="Criar" />
+        <Item id="reels" icon={<Clapperboard />} label="Reels" />
+        <Item id="profile" icon={<User2 />} label="Perfil" />
       </div>
     </nav>
   );
 }
 
-// ====== Upload de mídia ======
-async function uploadToBucket(file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || (file.type.startsWith("video") ? "mp4" : "jpg");
-  const path = `posts/${crypto.randomUUID()}.${ext}`;
+// ===== Feed =====
+function Feed({ me }: { me: Profile | null }) {
+  const [posts, setPosts] = useState<Post[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("posts")
+        .select("*, profiles!posts_user_id_fkey(id, username, avatar_url)")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      setPosts((data ?? []) as any);
+    })();
+  }, []);
 
-  const { error: upErr } = await supabase.storage.from("media").upload(path, file, {
-    contentType: file.type,
-    upsert: false,
-  });
-  if (upErr) throw upErr;
-
-  const { data } = supabase.storage.from("media").getPublicUrl(path);
-  return data.publicUrl;
+  return (
+    <main className="max-w-3xl mx-auto px-4 pb-24">
+      {posts.map((p) => (
+        <article key={p.id} className="bg-white border border-neutral-200 rounded-2xl mt-4">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Avatar url={p.profiles?.avatar_url} size={36} />
+            <div className="font-medium">@{p.profiles?.username ?? "user"}</div>
+          </div>
+          <MediaView url={p.media_url} type={p.media_type} />
+          {p.caption && <div className="px-4 py-3 text-sm">{p.caption}</div>}
+          <div className="px-4 py-3 flex gap-4 text-neutral-600">
+            <button className="hover:text-neutral-900 flex items-center gap-2">
+              <Heart size={20} /> Curtir
+            </button>
+            <button className="hover:text-neutral-900 flex items-center gap-2">
+              <MessageCircle size={20} /> Comentar
+            </button>
+          </div>
+        </article>
+      ))}
+      {posts.length === 0 && (
+        <div className="text-center text-neutral-500 py-12">Sem posts por enquanto.</div>
+      )}
+    </main>
+  );
 }
 
-// ====== App ======
-export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [tab, setTab] = useState<"feed" | "profile">("feed");
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  // Feed
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [caption, setCaption] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [externalUrl, setExternalUrl] = useState("");
-  const [posting, setPosting] = useState(false);
-
-  // ====== Auth ======
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session ?? null);
-
-      supabase.auth.onAuthStateChange((_e, s) => setSession(s ?? null));
-    })();
-  }, []);
-
-  // Cria/Carrega perfil do usuário logado
-  useEffect(() => {
-    if (!session?.user) return;
-
-    (async () => {
-      // tenta buscar
-      const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-
-      if (!data) {
-        // criar básico
-        const baseUsername =
-          session.user.user_metadata?.user_name ||
-          (session.user.email ? session.user.email.split("@")[0] : "user") +
-            Math.floor(Math.random() * 10000);
-
-        const insert: Partial<Profile> = {
-          id: session.user.id,
-          full_name: session.user.user_metadata?.name || session.user.user_metadata?.full_name || "User",
-          username: baseUsername.toLowerCase(),
-          avatar_url: session.user.user_metadata?.avatar_url || null,
-          bio: null,
-        };
-
-        const { data: created, error } = await supabase.from("profiles").insert(insert).select("*").single();
-        if (!error) setProfile(created);
-      } else {
-        setProfile(data);
-      }
-    })();
-  }, [session]);
-
-  // Carrega feed (posts mais recentes)
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from("posts")
-        .select("id,user_id,media_url,caption,media_type,created_at, author:profiles(id,full_name,username,avatar_url)")
-        .order("created_at", { ascending: false })
-        .limit(40);
-
-      if (!error && data) {
-        // @ts-ignore - mapeando alias "author"
-        setPosts(data as Post[]);
-      }
-    })();
-  }, []);
-
-  const myPosts = useMemo(
-    () => posts.filter((p) => p.user_id === profile?.id),
-    [posts, profile?.id]
+function MediaView({ url, type }: { url: string; type: "image" | "video" }) {
+  return type === "video" ? (
+    <video src={url} controls className="w-full aspect-[4/5] object-cover rounded-b-2xl" />
+  ) : (
+    <img src={url} className="w-full aspect-[4/5] object-cover rounded-b-2xl" />
   );
+}
 
-  // ====== Ações ======
-  const signIn = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
+function Avatar({ url, size = 64 }: { url?: string | null; size?: number }) {
+  return url ? (
+    <img
+      src={url}
+      style={{ width: size, height: size }}
+      className="rounded-full object-cover border border-neutral-200"
+    />
+  ) : (
+    <div
+      style={{ width: size, height: size }}
+      className="rounded-full bg-neutral-200 grid place-items-center text-neutral-600 font-semibold"
+    >
+      AN
+    </div>
+  );
+}
+
+// ===== Create Post (modal screen) =====
+function CreatePost({ me, onDone }: { me: Profile | null; onDone: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [caption, setCaption] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  const kind: "image" | "video" | null = file ? (isVideoFile(file) ? "video" : "image") : null;
+
+  async function handlePublish() {
+    if (!file) return;
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return;
+
+    const ext = file.name.split(".").pop() ?? (kind === "video" ? "mp4" : "jpg");
+    const path = `${user.id}/posts/${Date.now()}.${ext}`;
+    const publicUrl = await uploadToStorage({ file, path, bucket: "media" });
+
+    await supabase.from("posts").insert({
+      user_id: user.id,
+      media_url: publicUrl,
+      caption: caption || null,
+      media_type: kind ?? "image",
     });
-  };
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setProfile(null);
-  };
-
-  const handlePublish = async () => {
-    if (!session?.user) return;
-    if (!file && !externalUrl) return;
-
-    try {
-      setPosting(true);
-
-      let mediaUrl = externalUrl.trim();
-      let mediaType: "image" | "video" = "image";
-
-      if (!mediaUrl && file) {
-        mediaType = getFileMediaType(file);
-        mediaUrl = await uploadToBucket(file);
-      } else if (mediaUrl) {
-        // heurística simples pela extensão
-        mediaType = /\.(mp4|mov|webm)$/i.test(mediaUrl) ? "video" : "image";
-      }
-
-      const { data, error } = await supabase
-        .from("posts")
-        .insert({
-          user_id: session.user.id,
-          caption: caption.trim() || null,
-          media_url: mediaUrl,
-          media_type: mediaType,
-        })
-        .select(
-          "id,user_id,media_url,caption,media_type,created_at, author:profiles(id,full_name,username,avatar_url)"
-        )
-        .single();
-
-      if (error) throw error;
-
-      // adiciona no topo do feed
-      setPosts((prev) => [data as Post, ...prev]);
-      // limpa formulário
-      setCaption("");
-      setFile(null);
-      setExternalUrl("");
-    } catch (e: any) {
-      alert(e.message || "Falha ao publicar.");
-    } finally {
-      setPosting(false);
-    }
-  };
-
-  // ====== UI ======
-  if (!session) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-50">
-        <div className="w-full max-w-sm p-6 bg-white border rounded-2xl shadow-sm text-center">
-          <h1 className="text-2xl font-bold mb-2">LIV</h1>
-          <p className="text-zinc-600 mb-6">Compartilhe sua vida saudável 🌿</p>
-          <button
-            onClick={signIn}
-            className="w-full py-3 rounded-xl bg-black text-white font-semibold"
-          >
-            Entrar com Google
-          </button>
-        </div>
-      </div>
-    );
+    onDone();
   }
 
   return (
-    <div className="min-h-screen bg-white pb-16">
-      {/* Cabeçalho */}
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-        <div className="mx-auto max-w-xl px-4 py-3 flex items-center justify-between">
-          <h1 className="font-bold tracking-tight">LIV</h1>
+    <main className="max-w-3xl mx-auto px-4 pb-24">
+      <div className="bg-white border border-neutral-200 rounded-2xl mt-4 p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-lg font-semibold">Nova publicação</div>
           <button
-            onClick={signOut}
-            className="text-sm text-zinc-500 hover:text-zinc-800"
+            className="rounded-lg px-3 py-1.5 bg-neutral-900 text-white disabled:opacity-40"
+            disabled={!file}
+            onClick={handlePublish}
           >
-            Logout
+            Publicar
           </button>
         </div>
-      </header>
 
-      {/* Conteúdo */}
-      <main className="mx-auto max-w-xl px-4">
-        {tab === "feed" ? (
-          <>
-            {/* Composer - mais limpo */}
-            <div className="mt-4 mb-3 rounded-2xl border p-3">
+        {!file ? (
+          <div className="mt-6 border-2 border-dashed border-neutral-300 rounded-2xl p-10 grid place-items-center">
+            <button
+              onClick={() => inputRef.current?.click()}
+              className="flex items-center gap-2 rounded-xl bg-neutral-900 text-white px-4 py-2"
+            >
+              <Camera size={18} /> Selecionar foto/vídeo
+            </button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <div className="w-full">
+              {kind === "video" ? (
+                <video src={previewUrl!} controls className="w-full rounded-2xl" />
+              ) : (
+                <img src={previewUrl!} className="w-full rounded-2xl object-cover" />
+              )}
+            </div>
+            <div>
+              <label className="text-sm text-neutral-600">Legenda</label>
               <textarea
-                placeholder="Legenda"
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
-                className="w-full resize-none outline-none placeholder:text-zinc-400 text-sm"
-                rows={2}
+                rows={6}
+                className="mt-2 w-full rounded-xl border border-neutral-300 p-3 outline-none focus:ring-2 focus:ring-neutral-900"
+                placeholder="Escreva algo…"
               />
-              <div className="mt-2 flex items-center gap-2">
-                <label className="inline-flex items-center px-3 py-2 rounded-xl border cursor-pointer text-sm">
-                  <input
-                    type="file"
-                    accept="image/*,video/*"
-                    className="hidden"
-                    onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  />
-                  {file ? "Arquivo selecionado" : "Escolher arquivo"}
-                </label>
-                <span className="text-xs text-zinc-400">ou</span>
-                <input
-                  type="url"
-                  placeholder="URL externa (opcional)"
-                  value={externalUrl}
-                  onChange={(e) => setExternalUrl(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-xl border text-sm"
-                />
+              <div className="mt-4 flex gap-2">
                 <button
-                  onClick={handlePublish}
-                  disabled={posting || (!file && !externalUrl)}
-                  className="px-4 py-2 rounded-xl bg-black text-white text-sm font-semibold disabled:opacity-50"
+                  className="px-3 py-2 rounded-xl border border-neutral-300"
+                  onClick={() => setFile(null)}
                 >
-                  {posting ? "Publicando..." : "Postar"}
+                  Trocar arquivo
+                </button>
+                <button className="px-3 py-2 rounded-xl" onClick={onDone}>
+                  Cancelar
                 </button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
 
-            {/* Feed */}
-            <section className="space-y-4">
-              {posts.map((p) => (
-                <article key={p.id} className="border rounded-2xl p-3">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Avatar src={p.author?.avatar_url} alt={p.author?.full_name || "User"} size={36} />
-                    <div className="leading-tight">
-                      <div className="text-sm font-medium">
-                        {p.author?.full_name || "Usuário"}
-                      </div>
-                      <div className="text-xs text-zinc-500">
-                        @{p.author?.username || "user"} • {fmtDate(p.created_at)}
-                      </div>
-                    </div>
-                  </div>
+// ===== Profile =====
+function ProfilePage({
+  me,
+  refreshMe,
+}: {
+  me: Profile | null;
+  refreshMe: (p: Profile | null) => void;
+}) {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
 
-                  <div className="rounded-xl overflow-hidden border bg-black/5">
-                    {p.media_type === "video" ? (
-                      <video src={p.media_url || ""} controls playsInline className="w-full h-auto" />
-                    ) : (
-                      <img src={p.media_url || ""} alt="" className="w-full h-auto object-cover" />
-                    )}
-                  </div>
+  useEffect(() => {
+    (async () => {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) return;
+      const { data } = await supabase
+        .from("posts")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      setPosts((data ?? []) as any);
+      setLoading(false);
+    })();
+  }, []);
 
-                  {p.caption && (
-                    <p className="mt-2 text-sm">{p.caption}</p>
-                  )}
-                </article>
-              ))}
-            </section>
-          </>
-        ) : (
-          // ====== PERFIL ======
-          <section className="mt-4 pb-8">
-            <div className="flex items-start gap-4">
-              <Avatar src={profile?.avatar_url} alt={profile?.full_name || "User"} size={72} />
-              <div className="flex-1">
-                <h2 className="text-xl font-bold leading-tight">
-                  {profile?.full_name || "User"}
-                </h2>
-                <div className="text-zinc-500">@{profile?.username || "user"}</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="px-3 py-1 rounded-full bg-zinc-100 text-xs">
-                    295 followers
-                  </span>
-                  <button className="px-4 py-1.5 rounded-full bg-black text-white text-sm font-semibold">
-                    Follow
-                  </button>
-                </div>
+  async function changeAvatar(file: File) {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return;
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${user.id}/avatars/avatar.${ext}`;
+    const publicUrl = await uploadToStorage({ file, path, bucket: "media" });
+    await supabase.from("profiles").update({ avatar_url: publicUrl }).eq("id", user.id);
+    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+    refreshMe(data as Profile);
+  }
+
+  return (
+    <main className="max-w-3xl mx-auto px-4 pb-24">
+      <div className="bg-white border border-neutral-200 rounded-2xl mt-4 p-4">
+        <div className="flex items-center gap-4">
+          <Avatar url={me?.avatar_url} size={72} />
+          <div>
+            <div className="text-xl font-semibold">{me?.full_name ?? " "}</div>
+            <div className="text-neutral-600">@{me?.username}</div>
+            <div className="text-neutral-500 text-sm mt-1">295 followers</div>
+          </div>
+          <div className="ml-auto">
+            <label className="cursor-pointer text-sm rounded-xl border border-neutral-300 px-3 py-1.5 hover:bg-neutral-50">
+              Trocar foto
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) changeAvatar(f);
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <div className="font-semibold">Highlights</div>
+          <div className="flex gap-4 mt-3">
+            {["Running", "Cycling", "Workouts", "Food"].map((h) => (
+              <div key={h} className="text-center">
+                <div className="size-14 rounded-full bg-neutral-200" />
+                <div className="text-xs text-neutral-600 mt-1">{h}</div>
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
 
-            {profile?.bio && (
-              <p className="mt-3 text-sm text-zinc-700">{profile.bio}</p>
-            )}
-
-            {/* Highlights fake */}
-            <div className="mt-4">
-              <h3 className="font-semibold mb-2">Highlights</h3>
-              <div className="flex gap-3">
-                {["Running", "Cycling", "Workouts", "Food"].map((x) => (
-                  <div key={x} className="w-16">
-                    <div className="w-16 h-16 rounded-full border bg-zinc-50" />
-                    <div className="text-xs text-center mt-1 text-zinc-600">{x}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Posts em grade */}
-            <div className="mt-5">
-              <h3 className="font-semibold mb-2">Posts</h3>
-              {myPosts.length === 0 ? (
-                <div className="text-sm text-zinc-500">Você ainda não publicou nada.</div>
-              ) : (
-                <div className="grid grid-cols-3 gap-1">
-                  {myPosts.map((p) => (
-                    <div key={p.id} className="relative aspect-square bg-zinc-100 overflow-hidden">
-                      {p.media_type === "video" ? (
-                        <video src={p.media_url || ""} className="w-full h-full object-cover" muted playsInline />
-                      ) : (
-                        <img src={p.media_url || ""} className="w-full h-full object-cover" />
-                      )}
-                    </div>
-                  ))}
-                </div>
+        <div className="mt-6">
+          <div className="font-semibold">Posts</div>
+          {loading ? (
+            <div className="text-neutral-500 mt-4">Carregando…</div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 mt-4">
+              {posts.map((p) =>
+                p.media_type === "video" ? (
+                  <video
+                    key={p.id}
+                    src={p.media_url}
+                    className="w-full aspect-square object-cover rounded-lg"
+                    muted
+                    playsInline
+                  />
+                ) : (
+                  <img
+                    key={p.id}
+                    src={p.media_url}
+                    className="w-full aspect-square object-cover rounded-lg"
+                  />
+                )
               )}
             </div>
-          </section>
-        )}
-      </main>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}
 
-      <BottomNav tab={tab} onTab={setTab} />
-    </div>
+// ===== Placeholders =====
+function SearchPage() {
+  return (
+    <main className="max-w-3xl mx-auto px-4 pb-24">
+      <div className="bg-white border border-neutral-200 rounded-2xl mt-4 p-8 text-center text-neutral-500">
+        Busca de usuários (em breve)
+      </div>
+    </main>
+  );
+}
+
+function ReelsPage() {
+  return (
+    <main className="max-w-3xl mx-auto px-4 pb-24">
+      <div className="bg-white border border-neutral-200 rounded-2xl mt-4 p-8 text-center text-neutral-500">
+        Reels (em breve)
+      </div>
+    </main>
   );
 }
