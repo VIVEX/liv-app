@@ -1,479 +1,531 @@
-
 // src/App.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import {
-  Home,
-  Search,
-  PlusSquare,
-  Film,
-  LogOut,
-  Trash2,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import supabase from "./lib/supabaseClient";
+import { Camera, Heart, MessageCircle, Trash2, Home, Search, PlusSquare, Film, User } from "lucide-react";
 
-// ----- Supabase client (usa suas variáveis do Vite) -----
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY as
-  | string
-  | undefined;
-
-if (!supabaseUrl || !supabaseAnon) {
-  // Em dev mostra instrução no navegador. Em produção o build passa normalmente.
-  // Só aparece na tela se rodar sem variáveis.
-  throw new Error("Faltam VITE_SUPABASE_URL e/ou VITE_SUPABASE_ANON_KEY");
-}
-
-const supabase = createClient(supabaseUrl, supabaseAnon, {
-  auth: { persistSession: true, detectSessionInUrl: true, autoRefreshToken: true },
-});
-
-// ----- Tipos -----
+// --------- Tipos ---------
 type Profile = {
   id: string;
   username: string | null;
-  full_name: string | null;
   avatar_url: string | null;
-  bio: string | null;
-  created_at: string;
+  full_name: string | null;
 };
 
 type Post = {
   id: string;
   user_id: string;
   media_url: string;
-  media_type: "image" | "video" | null;
+  media_type: "image" | "video";
   caption: string | null;
   created_at: string;
-  user?: { username?: string | null };
+  profiles?: Profile; // join
+  likes?: { id: string; user_id: string }[];
+  comments?: CommentRow[];
 };
 
-// Util: formar URL pública do Storage (bucket "media" público)
-const publicMediaUrl = (path: string) =>
-  `${supabaseUrl}/storage/v1/object/public/media/${path}`;
-
-// Util: iniciais para avatar fake
-const initials = (name?: string | null) =>
-  (name || "?")
-    .split(" ")
-    .map((s) => s[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-
-// -------- Componentes UI básicos --------
-const Button: React.FC<
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" }
-> = ({ className = "", variant = "primary", ...props }) => {
-  const base =
-    "inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition";
-  const styles =
-    variant === "primary"
-      ? "bg-black text-white hover:bg-neutral-800 disabled:opacity-60"
-      : "bg-transparent hover:bg-neutral-100";
-  return <button className={`${base} ${styles} ${className}`} {...props} />;
+type CommentRow = {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  profiles?: Profile;
 };
 
-const Card: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
-  className = "",
-  ...props
-}) => (
-  <div
-    className={`rounded-2xl border border-neutral-200 bg-white ${className}`}
-    {...props}
+// --------- Helpers ---------
+function isVideoFile(file: File) {
+  return file.type.startsWith("video/");
+}
+function fileExt(file: File) {
+  const n = file.name.split(".");
+  return n.length > 1 ? n.pop()!.toLowerCase() : "";
+}
+function mediaTypeFromUrl(url: string): "image" | "video" {
+  return /\.(mp4|mov|webm)$/i.test(url) ? "video" : "image";
+}
+
+// --------- UI básicos ---------
+const Btn = (p: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button
+    {...p}
+    className={
+      "rounded-xl px-4 py-2 text-sm font-medium shadow-sm border border-neutral-200 hover:bg-neutral-50 active:scale-[.99] disabled:opacity-50 " +
+      (p.className ?? "")
+    }
   />
 );
 
-// ------------- Auth -------------
-const AuthView: React.FC = () => {
-  const login = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-  };
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50">
-      <Card className="w-[360px] p-6 text-center shadow-sm">
-        <h1 className="text-3xl font-bold tracking-tight">LIV</h1>
-        <p className="text-neutral-500 mt-2">Compartilhe sua vida saudável</p>
-        <Button onClick={login} className="mt-6 w-full">
-          Entrar com Google
-        </Button>
-      </Card>
-    </div>
-  );
-};
+const Avatar = ({ url, size = 40 }: { url?: string | null; size?: number }) => (
+  <div
+    style={{ width: size, height: size }}
+    className="rounded-full bg-neutral-200 overflow-hidden flex items-center justify-center"
+  >
+    {url ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={url} alt="" className="w-full h-full object-cover" />
+    ) : (
+      <div className="text-xs text-neutral-500">AN</div>
+    )}
+  </div>
+);
 
-// ------------- Feed -------------
-const Feed: React.FC<{
-  posts: Post[];
-  me?: Profile | null;
-  onDelete: (id: string) => void;
-}> = ({ posts, me, onDelete }) => {
-  if (posts.length === 0) {
+// --------- App ---------
+type Tab = "feed" | "search" | "new" | "reels" | "profile";
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>("feed");
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [me, setMe] = useState<Profile | null>(null);
+
+  // feed
+  const [feed, setFeed] = useState<Post[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(true);
+
+  // profile screen
+  const [myPosts, setMyPosts] = useState<Post[]>([]);
+  const [counts, setCounts] = useState<{ posts: number; followers: number; following: number }>({
+    posts: 0,
+    followers: 0,
+    following: 0,
+  });
+
+  // comments modal
+  const [openCommentsFor, setOpenCommentsFor] = useState<Post | null>(null);
+  const [newComment, setNewComment] = useState("");
+
+  // file picker for +
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ---------- Session / Me ----------
+  useEffect(() => {
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      const uid = data.user?.id ?? null;
+      setSessionUserId(uid);
+
+      if (!uid) return;
+
+      const { data: p } = await supabase.from("profiles").select("*").eq("id", uid).single();
+      if (p) setMe(p as Profile);
+    };
+    init();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      const uid = s?.user?.id ?? null;
+      setSessionUserId(uid);
+    });
+    return () => sub.subscription?.unsubscribe();
+  }, []);
+
+  // ---------- Feed ----------
+  useEffect(() => {
+    if (!sessionUserId) return;
+    const load = async () => {
+      setLoadingFeed(true);
+
+      // ids que eu sigo
+      const { data: followingRows, error: fErr } = await supabase
+        .from("followers")
+        .select("following_id")
+        .eq("follower_id", sessionUserId);
+
+      if (fErr) console.error(fErr);
+
+      const followingIds = (followingRows ?? []).map((r) => r.following_id);
+      const universe = Array.from(new Set([sessionUserId, ...followingIds]));
+
+      // posts das pessoas que sigo + meus
+      const { data: posts, error } = await supabase
+        .from("posts")
+        .select(
+          "id,user_id,media_url,media_type,caption,created_at, profiles:profiles!posts_user_id_fkey(id,username,avatar_url), likes(id,user_id), comments(id,post_id,user_id,content,created_at,profiles:profiles(id,username,avatar_url))"
+        )
+        .in("user_id", universe)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+      } else {
+        setFeed((posts as Post[]) || []);
+      }
+      setLoadingFeed(false);
+    };
+    load();
+  }, [sessionUserId]);
+
+  // ---------- Meu Perfil ----------
+  useEffect(() => {
+    if (!sessionUserId) return;
+    const load = async () => {
+      const [{ data: pc }, { data: fc }, { data: ing } ] = await Promise.all([
+        supabase.from("posts").select("id", { count: "exact", head: true }),
+        supabase.from("followers").select("id", { count: "exact", head: true }).eq("following_id", sessionUserId),
+        supabase.from("followers").select("id", { count: "exact", head: true }).eq("follower_id", sessionUserId),
+      ]);
+
+      const postsCount = (pc as any)?.count ?? 0;
+      const followersCount = (fc as any)?.count ?? 0;
+      const followingCount = (ing as any)?.count ?? 0;
+      setCounts({ posts: postsCount, followers: followersCount, following: followingCount });
+
+      const { data: posts } = await supabase
+        .from("posts")
+        .select("id,user_id,media_url,media_type,caption,created_at, likes(id,user_id)")
+        .eq("user_id", sessionUserId)
+        .order("created_at", { ascending: false });
+
+      setMyPosts((posts as Post[]) || []);
+    };
+    load();
+  }, [sessionUserId]);
+
+  // ---------- Ações ----------
+  const iLike = (p: Post) => p.likes?.some((l) => l.user_id === sessionUserId);
+
+  const toggleLike = async (post: Post) => {
+    if (!sessionUserId) return;
+    try {
+      if (iLike(post)) {
+        // descurtir
+        const like = post.likes!.find((l) => l.user_id === sessionUserId)!;
+        await supabase.from("likes").delete().eq("id", like.id);
+        // otimista
+        setFeed((old) =>
+          old.map((x) => (x.id === post.id ? { ...x, likes: (x.likes || []).filter((l) => l.id !== like.id) } : x))
+        );
+        setMyPosts((old) =>
+          old.map((x) => (x.id === post.id ? { ...x, likes: (x.likes || []).filter((l) => l.id !== like.id) } : x))
+        );
+      } else {
+        const { data, error } = await supabase
+          .from("likes")
+          .insert({ post_id: post.id, user_id: sessionUserId })
+          .select()
+          .single();
+        if (error) throw error;
+        setFeed((old) => old.map((x) => (x.id === post.id ? { ...x, likes: [...(x.likes || []), data] } : x)));
+        setMyPosts((old) => old.map((x) => (x.id === post.id ? { ...x, likes: [...(x.likes || []), data] } : x)));
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível atualizar a curtida.");
+    }
+  };
+
+  const deletePost = async (postId: string) => {
+    if (!sessionUserId) return;
+    if (!confirm("Excluir post?")) return;
+    try {
+      await supabase.from("posts").delete().eq("id", postId).eq("user_id", sessionUserId);
+      setFeed((old) => old.filter((p) => p.id !== postId));
+      setMyPosts((old) => old.filter((p) => p.id !== postId));
+      setCounts((c) => ({ ...c, posts: Math.max(0, c.posts - 1) }));
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao excluir.");
+    }
+  };
+
+  const sendComment = async () => {
+    if (!openCommentsFor || !newComment.trim() || !sessionUserId) return;
+    try {
+      const { data, error } = await supabase
+        .from("comments")
+        .insert({ post_id: openCommentsFor.id, user_id: sessionUserId, content: newComment.trim() })
+        .select("id,post_id,user_id,content,created_at,profiles:profiles(id,username,avatar_url)")
+        .single();
+      if (error) throw error;
+
+      setFeed((old) =>
+        old.map((p) => (p.id === openCommentsFor.id ? { ...p, comments: [...(p.comments || []), data as any] } : p))
+      );
+      setNewComment("");
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível comentar.");
+    }
+  };
+
+  // upload pelo botão +
+  const onPickFile = () => fileInputRef.current?.click();
+
+  const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f || !sessionUserId) return;
+
+    try {
+      // nome único
+      const path = `${sessionUserId}/${Date.now()}.${fileExt(f) || (isVideoFile(f) ? "mp4" : "jpg")}`;
+      const { error: upErr } = await supabase.storage.from("media").upload(path, f, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+      if (upErr) throw upErr;
+
+      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
+      const media_url = pub.publicUrl;
+      const media_type = isVideoFile(f) ? "video" : "image";
+
+      const { data: post, error } = await supabase
+        .from("posts")
+        .insert({ user_id: sessionUserId, media_url, media_type, caption: null })
+        .select()
+        .single();
+      if (error) throw error;
+
+      // add no topo do feed e do perfil
+      const newPost: Post = { ...(post as any), likes: [], comments: [], profiles: me || undefined };
+      setFeed((old) => [newPost, ...old]);
+      setMyPosts((old) => [newPost, ...old]);
+      setCounts((c) => ({ ...c, posts: c.posts + 1 }));
+      setTab("profile");
+    } catch (e: any) {
+      console.error(e);
+      alert("Falha ao publicar. " + (e?.message || ""));
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // --------- Render ---------
+  if (!sessionUserId) {
     return (
-      <div className="py-16 text-center text-neutral-500">
-        Sem posts por enquanto.
+      <div className="min-h-screen grid place-items-center">
+        <div className="rounded-2xl border p-10 w-[320px] text-center shadow-sm">
+          <h1 className="text-2xl font-bold mb-2">LIV</h1>
+          <p className="text-neutral-600 mb-6">Compartilhe sua vida saudável</p>
+          <Btn
+            onClick={async () => {
+              const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
+              if (error) alert(error.message);
+            }}
+            className="w-full bg-black text-white border-black"
+          >
+            Entrar com Google
+          </Btn>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-      {posts.map((p) => {
-        const isMine = me?.id === p.user_id;
-        const isVideo = p.media_type === "video" || /\.mp4|\.mov|\.webm$/i.test(p.media_url);
-        return (
-          <div key={p.id} className="relative group overflow-hidden rounded-2xl">
-            {isVideo ? (
-              <video
-                controls
-                className="w-full h-full object-cover aspect-square bg-black"
-                src={p.media_url}
-              />
-            ) : (
-              <img
-                src={p.media_url}
-                alt={p.caption || "post"}
-                className="w-full h-full object-cover aspect-square"
-                onError={(e) => {
-                  // evita "quadro em branco": se a URL quebrar, some o item
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
-              />
-            )}
-            {isMine && (
-              <button
-                title="Excluir post"
-                onClick={() => onDelete(p.id)}
-                className="absolute top-2 right-2 hidden group-hover:flex items-center gap-1 rounded-full bg-white/90 px-3 py-1 text-xs shadow"
-              >
-                <Trash2 size={14} />
-                Excluir
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-// ------------- Nova Publicação -------------
-const NewPostInline: React.FC<{
-  me: Profile;
-  onCreated: () => void;
-}> = ({ me, onCreated }) => {
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const openPicker = () => inputRef.current?.click();
-
-  const handleFile = (f: File | null) => setFile(f);
-
-  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : ""), [file]);
-
-  const publish = async () => {
-    if (!file) return;
-    setUploading(true);
-    try {
-      // caminho: userId/timestamp-nome.ext
-      const safeName = file.name.replace(/\s+/g, "_");
-      const path = `${me.id}/${Date.now()}-${safeName}`;
-      const { error: upErr } = await supabase.storage.from("media").upload(path, file, {
-        upsert: false,
-      });
-      if (upErr) throw upErr;
-
-      const url = publicMediaUrl(path);
-      const media_type = /\.(mp4|mov|webm)$/i.test(file.name) ? "video" : "image";
-
-      const { error: insErr } = await supabase.from("posts").insert({
-        user_id: me.id,
-        media_url: url,
-        caption: null,
-        media_type,
-      });
-      if (insErr) throw insErr;
-
-      setFile(null);
-      onCreated();
-    } catch (e) {
-      alert("Falha ao publicar. Tente de novo.");
-      // console.error(e);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <div className="font-medium">Nova publicação</div>
-        <Button onClick={publish} disabled={!file || uploading}>
-          {uploading ? "Publicando..." : "Publicar"}
-        </Button>
-      </div>
-
-      <div
-        onClick={openPicker}
-        className="cursor-pointer rounded-xl border border-dashed border-neutral-300 p-6 text-center hover:bg-neutral-50"
-      >
-        {file ? (
-          /\.(mp4|mov|webm)$/i.test(file.name) ? (
-            <video className="mx-auto rounded-lg max-h-80" src={previewUrl} controls />
-          ) : (
-            <img
-              src={previewUrl}
-              alt="preview"
-              className="mx-auto rounded-lg max-h-80 object-contain"
-            />
-          )
-        ) : (
-          <div className="text-neutral-600">Selecionar foto/vídeo</div>
-        )}
-      </div>
-
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*,video/*"
-        className="hidden"
-        onChange={(e) => handleFile(e.target.files?.[0] || null)}
-      />
-    </Card>
-  );
-};
-
-// ------------- Perfil -------------
-const ProfileHeader: React.FC<{ me: Profile; onLogout: () => void }> = ({
-  me,
-  onLogout,
-}) => {
-  return (
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center gap-3">
-        {me.avatar_url ? (
-          <img
-            src={me.avatar_url}
-            className="w-14 h-14 rounded-full object-cover"
-            alt="avatar"
-          />
-        ) : (
-          <div className="w-14 h-14 rounded-full bg-neutral-200 flex items-center justify-center text-neutral-700 font-semibold">
-            {initials(me.full_name || me.username)}
-          </div>
-        )}
-        <div>
-          <div className="font-semibold text-lg">{me.full_name || "Sem nome"}</div>
-          <div className="text-neutral-500">@{me.username || "usuario"}</div>
-        </div>
-      </div>
-      <Button variant="ghost" onClick={onLogout}>
-        <LogOut className="mr-2" size={16} />
-        Sair
-      </Button>
-    </div>
-  );
-};
-
-// ------------- App -------------
-const App: React.FC = () => {
-  const [session, setSession] = useState<Awaited<
-    ReturnType<typeof supabase.auth.getSession>
-  >["data"]["session"] | null>(null);
-
-  const [me, setMe] = useState<Profile | null>(null);
-  const [tab, setTab] = useState<"home" | "search" | "create" | "reels" | "profile">(
-    "home"
-  );
-
-  const [feed, setFeed] = useState<Post[]>([]);
-  const [myPosts, setMyPosts] = useState<Post[]>([]);
-  const [loadingFeed, setLoadingFeed] = useState(false);
-
-  // Sessão
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, []);
-
-  // Carrega perfil do usuário logado
-  useEffect(() => {
-    const loadMe = async () => {
-      if (!session?.user) return setMe(null);
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", session.user.id)
-        .single();
-
-      if (!error && data) setMe(data as Profile);
-      else {
-        // cria perfil se não existir
-        const usernameBase = (session.user.email || "user")
-          .split("@")[0]
-          .replace(/[^a-z0-9_]/gi, "")
-          .toLowerCase();
-        await supabase.from("profiles").insert({
-          id: session.user.id,
-          username: usernameBase,
-          full_name: session.user.user_metadata?.name || usernameBase,
-          avatar_url: session.user.user_metadata?.avatar_url || null,
-          bio: null,
-        });
-        const { data: again } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", session.user.id)
-          .single();
-        if (again) setMe(again as Profile);
-      }
-    };
-    loadMe();
-  }, [session]);
-
-  // Carrega feed e meus posts
-  const reloadFeed = async () => {
-    setLoadingFeed(true);
-    const { data } = await supabase
-      .from("posts")
-      .select("*, user:profiles(username)")
-      .order("created_at", { ascending: false })
-      .limit(60);
-    setFeed((data as Post[]) || []);
-    setLoadingFeed(false);
-  };
-
-  const reloadMine = async () => {
-    if (!me) return;
-    const { data } = await supabase
-      .from("posts")
-      .select("*")
-      .eq("user_id", me.id)
-      .order("created_at", { ascending: false });
-    setMyPosts((data as Post[]) || []);
-  };
-
-  useEffect(() => {
-    if (session) reloadFeed();
-  }, [session]);
-
-  useEffect(() => {
-    if (me) reloadMine();
-  }, [me]);
-
-  const deletePost = async (id: string) => {
-    if (!confirm("Excluir este post?")) return;
-    const { error } = await supabase.from("posts").delete().eq("id", id);
-    if (!error) {
-      setFeed((f) => f.filter((p) => p.id !== id));
-      setMyPosts((f) => f.filter((p) => p.id !== id));
-    }
-  };
-
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setTab("home");
-  };
-
-  if (!session) return <AuthView />;
-
-  return (
-    <div className="min-h-screen bg-white">
-      {/* Top bar */}
-      <div className="h-14 flex items-center justify-between px-4 border-b">
-        <div className="font-semibold">LIV</div>
-        <div className="text-sm text-neutral-500">
-          {tab === "home"
-            ? "Feed"
-            : tab === "profile"
-            ? "Perfil"
-            : tab === "create"
-            ? "Nova publicação"
-            : tab === "search"
-            ? "Buscar"
-            : "Reels"}
-        </div>
-      </div>
-
-      {/* Conteúdo */}
-      <div className="max-w-4xl mx-auto px-4 py-6">
-        {tab === "home" && (
-          <>
-            <NewPostInline
-              me={me!}
-              onCreated={async () => {
-                await reloadFeed();
-                await reloadMine();
+    <div className="min-h-screen bg-white text-black">
+      {/* topo */}
+      <div className="sticky top-0 z-10 border-b bg-white/70 backdrop-blur-sm">
+        <div className="mx-auto max-w-2xl px-4 py-3 flex items-center justify-between">
+          <span className="font-semibold">LIV</span>
+          <div className="flex items-center gap-3">
+            <Btn
+              onClick={async () => {
+                await supabase.auth.signOut();
+                location.reload();
               }}
-            />
-            {loadingFeed ? (
-              <div className="py-8 text-center text-neutral-500">Carregando…</div>
-            ) : (
-              <Feed posts={feed} me={me} onDelete={deletePost} />
+            >
+              Logout
+            </Btn>
+          </div>
+        </div>
+      </div>
+
+      {/* conteúdo */}
+      <main className="mx-auto max-w-2xl px-2 pb-24">
+        {tab === "feed" && (
+          <section className="pt-4">
+            {loadingFeed && <p className="text-center text-neutral-500 mt-10">Carregando…</p>}
+            {!loadingFeed && feed.length === 0 && (
+              <p className="text-center text-neutral-500 mt-10">Sem posts por enquanto.</p>
             )}
-          </>
+
+            <div className="flex flex-col gap-6">
+              {feed.map((p) => (
+                <article key={p.id} className="rounded-2xl border overflow-hidden">
+                  {/* header do post */}
+                  <div className="px-3 py-2 flex items-center gap-3">
+                    <Avatar url={p.profiles?.avatar_url} />
+                    <div className="text-sm">
+                      <div className="font-semibold">@{p.profiles?.username ?? "user"}</div>
+                      <div className="text-neutral-500 text-xs">
+                        {new Date(p.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="ml-auto">
+                      {p.user_id === sessionUserId && (
+                        <button
+                          onClick={() => deletePost(p.id)}
+                          className="p-2 rounded-full hover:bg-neutral-100"
+                          title="Excluir post"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* mídia */}
+                  <div className="bg-black">
+                    {p.media_type === "video" ? (
+                      <video src={p.media_url} controls className="w-full max-h-[70vh] object-contain" />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.media_url} alt="" className="w-full object-cover max-h-[70vh]" />
+                    )}
+                  </div>
+
+                  {/* ações */}
+                  <div className="px-3 py-2 flex items-center gap-4">
+                    <button className="flex items-center gap-1" onClick={() => toggleLike(p)}>
+                      <Heart
+                        size={22}
+                        className={iLike(p) ? "fill-red-500 stroke-red-500" : "stroke-black"}
+                      />
+                      <span className="text-sm">{p.likes?.length || 0}</span>
+                    </button>
+
+                    <button
+                      className="flex items-center gap-1"
+                      onClick={() => setOpenCommentsFor(p)}
+                      title="Comentários"
+                    >
+                      <MessageCircle size={22} />
+                      <span className="text-sm">{p.comments?.length || 0}</span>
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         )}
 
         {tab === "profile" && me && (
-          <>
-            <ProfileHeader me={me} onLogout={logout} />
-            <Feed posts={myPosts} me={me} onDelete={deletePost} />
-          </>
-        )}
-
-        {tab === "create" && (
-          <NewPostInline
-            me={me!}
-            onCreated={async () => {
-              setTab("home");
-              await reloadFeed();
-              await reloadMine();
-            }}
-          />
-        )}
-
-        {tab === "search" && (
-          <div className="text-neutral-500">Busca de usuários (em breve)</div>
-        )}
-        {tab === "reels" && (
-          <div className="text-neutral-500">Reels/Stories (em breve)</div>
-        )}
-      </div>
-
-      {/* Bottom nav */}
-      <nav className="fixed bottom-0 inset-x-0 h-14 border-t bg-white">
-        <div className="max-w-4xl mx-auto h-full px-8 flex items-center justify-between">
-          <button onClick={() => setTab("home")}>
-            <Home strokeWidth={tab === "home" ? 2.5 : 1.5} />
-          </button>
-          <button onClick={() => setTab("search")}>
-            <Search strokeWidth={tab === "search" ? 2.5 : 1.5} />
-          </button>
-          <button onClick={() => setTab("create")}>
-            <PlusSquare strokeWidth={tab === "create" ? 2.5 : 1.5} />
-          </button>
-          <button onClick={() => setTab("reels")}>
-            <Film strokeWidth={tab === "reels" ? 2.5 : 1.5} />
-          </button>
-          <button onClick={() => setTab("profile")}>
-            {/* avatar mini */}
-            {me?.avatar_url ? (
-              <img src={me.avatar_url} className="w-6 h-6 rounded-full" />
-            ) : (
-              <div className="w-6 h-6 rounded-full bg-neutral-200 flex items-center justify-center text-[10px]">
-                {initials(me?.full_name || me?.username)}
+          <section className="pt-4">
+            <div className="flex items-center gap-4 px-2">
+              <Avatar url={me.avatar_url} size={70} />
+              <div>
+                <div className="text-xl font-semibold">{me.full_name || "Meu perfil"}</div>
+                <div className="text-neutral-500">@{me.username}</div>
               </div>
+            </div>
+
+            {/* contadores */}
+            <div className="grid grid-cols-3 text-center my-4">
+              <div>
+                <div className="font-semibold">{counts.posts}</div>
+                <div className="text-neutral-500 text-sm">posts</div>
+              </div>
+              <div>
+                <div className="font-semibold">{counts.followers}</div>
+                <div className="text-neutral-500 text-sm">seguidores</div>
+              </div>
+              <div>
+                <div className="font-semibold">{counts.following}</div>
+                <div className="text-neutral-500 text-sm">seguindo</div>
+              </div>
+            </div>
+
+            {/* grade de posts */}
+            <div className="grid grid-cols-3 gap-2">
+              {myPosts.map((p) => (
+                <div key={p.id} className="relative group aspect-square overflow-hidden rounded-lg border">
+                  {p.media_type === "video" ? (
+                    <video src={p.media_url} className="w-full h-full object-cover" muted />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.media_url} className="w-full h-full object-cover" alt="" />
+                  )}
+
+                  {/* excluir no hover */}
+                  <button
+                    onClick={() => deletePost(p.id)}
+                    className="absolute top-2 right-2 p-1 rounded-full bg-white/90 opacity-0 group-hover:opacity-100"
+                    title="Excluir post"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {myPosts.length === 0 && (
+              <p className="text-center text-neutral-500 mt-10">Você ainda não publicou.</p>
             )}
+          </section>
+        )}
+      </main>
+
+      {/* barra inferior */}
+      <nav className="fixed bottom-0 inset-x-0 border-t bg-white">
+        <div className="mx-auto max-w-2xl px-6 py-3 flex items-center justify-between">
+          <button onClick={() => setTab("feed")} className={tab === "feed" ? "text-black" : "text-neutral-500"}>
+            <Home />
+          </button>
+          <button onClick={() => setTab("search")} className={tab === "search" ? "text-black" : "text-neutral-500"}>
+            <Search />
+          </button>
+
+          {/* Botão + abre o seletor diretamente */}
+          <button onClick={onPickFile} className="text-black">
+            <PlusSquare />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            hidden
+            onChange={onFileChosen}
+          />
+
+          <button onClick={() => setTab("reels")} className={tab === "reels" ? "text-black" : "text-neutral-500"}>
+            <Film />
+          </button>
+          <button onClick={() => setTab("profile")} className={tab === "profile" ? "text-black" : "text-neutral-500"}>
+            <User />
           </button>
         </div>
       </nav>
+
+      {/* Modal de comentários */}
+      {openCommentsFor && (
+        <div className="fixed inset-0 bg-black/40 grid place-items-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="font-semibold">Comentários</div>
+              <button onClick={() => setOpenCommentsFor(null)} className="text-sm text-neutral-500">
+                Fechar
+              </button>
+            </div>
+
+            <div className="max-h-[50vh] overflow-y-auto p-3 space-y-3">
+              {(openCommentsFor.comments || []).map((c) => (
+                <div key={c.id} className="flex items-start gap-3">
+                  <Avatar url={c.profiles?.avatar_url} size={28} />
+                  <div>
+                    <div className="text-sm">
+                      <span className="font-semibold">@{c.profiles?.username ?? "user"}</span>{" "}
+                      {c.content}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      {new Date(c.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {(!openCommentsFor.comments || openCommentsFor.comments.length === 0) && (
+                <p className="text-center text-neutral-500 py-6">Seja o primeiro a comentar</p>
+              )}
+            </div>
+
+            <div className="border-t p-3 flex gap-2">
+              <input
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Adicionar comentário…"
+                className="flex-1 border rounded-lg px-3 py-2"
+              />
+              <Btn onClick={sendComment} disabled={!newComment.trim()}>
+                Enviar
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-export default App;
+}
