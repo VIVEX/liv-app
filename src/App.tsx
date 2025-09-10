@@ -1,599 +1,702 @@
+// src/App.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import supabase from "./lib/supabaseClient";
+import { createClient, User, Session } from "@supabase/supabase-js";
+import {
+  Home,
+  Search,
+  PlusSquare,
+  Film,
+  User2,
+  LogOut,
+  Heart,
+  MessageSquare,
+  Trash2,
+  Camera,
+} from "lucide-react";
 
-type Profile = {
-  id: string;
-  username: string | null;
-  avatar_url: string | null;
-};
+// -------- Supabase client (usa suas envs do Vite) ----------
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY");
+}
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  global: { headers: { "x-application-name": "livet" } },
+});
 
-type Post = {
+// ----------------- Tipos -----------------
+type DBPost = {
   id: string;
   user_id: string;
   media_url: string;
   media_type: "image" | "video";
   caption: string | null;
   created_at: string;
-  likes_count?: number;
-  comments_count?: number;
-  you_liked?: boolean;
-  user?: { username: string | null; avatar_url: string | null };
 };
 
-type Comment = {
+type DBProfile = {
+  id: string; // user id
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  followers_count: number;
+  following_count: number;
+  posts_count?: number;
+};
+
+type DBLike = {
+  post_id: string;
+  user_id: string;
+};
+
+type DBComment = {
   id: string;
   post_id: string;
   user_id: string;
   content: string;
   created_at: string;
-  user?: { username: string | null; avatar_url: string | null };
+  profiles?: DBProfile; // if joined
 };
 
-function classNames(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
-}
-
-function extFromName(name: string) {
-  const p = name.split(".");
-  return p.length > 1 ? p[p.length - 1].toLowerCase() : "jpg";
-}
-
-export default function App() {
-  const [loading, setLoading] = useState(true);
-  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const [me, setMe] = useState<Profile | null>(null);
-  const [tab, setTab] = useState<"home" | "search" | "create" | "profile">(
-    "home"
-  );
-
-  // feed
-  const [feed, setFeed] = useState<Post[]>([]);
-  const [uploadBusy, setUploadBusy] = useState(false);
-
-  // profile page
-  const [myPosts, setMyPosts] = useState<Post[]>([]);
-  const [counters, setCounters] = useState({ posts: 0, followers: 0, following: 0 });
-
-  // comments modal
-  const [commentsOpen, setCommentsOpen] = useState(false);
-  const [commentsPost, setCommentsPost] = useState<Post | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [newComment, setNewComment] = useState("");
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-
-  // ---------------- Session / Profile ----------------
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      const uid = session?.user?.id ?? null;
-      setSessionUserId(uid);
-
-      if (uid) {
-        // profile
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, username, avatar_url")
-          .eq("id", uid)
-          .single();
-        if (!error && data) setMe(data as Profile);
-
-        // contadores do perfil
-        await refreshProfileCounters(uid);
+// ----------------- UI Helpers -----------------
+function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { className = "", ...rest } = props;
+  return (
+    <button
+      {...rest}
+      className={
+        "rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium hover:bg-neutral-50 " +
+        "disabled:cursor-not-allowed disabled:opacity-50 " +
+        className
       }
+    />
+  );
+}
 
+function IconButton({
+  children,
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) {
+  return (
+    <button
+      {...rest}
+      className="flex h-9 w-9 items-center justify-center rounded-md hover:bg-neutral-100"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Section({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <section className="w-full max-w-3xl px-4 py-4">
+      {title ? <h2 className="mb-3 text-lg font-semibold">{title}</h2> : null}
+      {children}
+    </section>
+  );
+}
+
+// -------------- Auth Gate ---------------
+function useAuth() {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setUser(data.session?.user ?? null);
       setLoading(false);
-    })();
-
-    const sub = supabase.auth.onAuthStateChange((_e, session) => {
-      const uid = session?.user?.id ?? null;
-      setSessionUserId(uid);
     });
-    return () => sub.data.subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => {
+      setSession(sess);
+      setUser(sess?.user ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  async function refreshProfileCounters(uid: string) {
-    const [{ count: posts }, { count: followers }, { count: following }] = await Promise.all([
-      supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", uid),
-      supabase.from("follows").select("id", { count: "exact", head: true }).eq("followed_id", uid),
-      supabase.from("follows").select("id", { count: "exact", head: true }).eq("follower_id", uid),
-    ]);
-    setCounters({
-      posts: posts ?? 0,
-      followers: followers ?? 0,
-      following: following ?? 0,
-    });
-  }
+  return { user, session, loading };
+}
 
-  // ---------------- Auth ----------------
-  async function handleLogin() {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) alert(error.message);
-  }
+// -------------- Upload helpers ---------------
+async function uploadToStorage(opts: {
+  file: File;
+  folder: "posts" | "avatars";
+  userId: string;
+}) {
+  const { file, folder, userId } = opts;
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.reload();
-  }
+  // nome único
+  const ext = file.name.split(".").pop() || (file.type.includes("png") ? "png" : "jpg");
+  const path = `${folder}/${userId}/${Date.now()}.${ext}`;
 
-  // ---------------- Feed ----------------
-  useEffect(() => {
-    // carrega feed (simples: todos os posts mais recentes)
-    (async () => {
-      const { data, error } = await supabase
-        .from("posts")
-        .select("id, user_id, media_url, media_type, caption, created_at, profiles(username, avatar_url)")
-        .order("created_at", { ascending: false })
-        .limit(60);
-      if (error) return;
+  const { error } = await supabase.storage.from("media").upload(path, file, {
+    cacheControl: "3600",
+    upsert: false,
+  });
+  if (error) throw error;
 
-      const posts: Post[] = (data || []).map((p: any) => ({
-        ...p,
-        user: p.profiles,
-      }));
+  const { data } = supabase.storage.from("media").getPublicUrl(path);
+  return data.publicUrl;
+}
 
-      // likes + comments count + você curtiu?
-      const ids = posts.map(p => p.id);
-      if (ids.length) {
-        const [likesAgg, myLikes, commentsAgg] = await Promise.all([
-          supabase.from("likes").select("post_id, count:id").in("post_id", ids).group("post_id"),
-          sessionUserId ? supabase.from("likes").select("post_id").eq("user_id", sessionUserId).in("post_id", ids) : Promise.resolve({ data: [] as any[], error: null }),
-          supabase.from("comments").select("post_id, count:id").in("post_id", ids).group("post_id"),
-        ]);
+function getMediaType(file: File): "image" | "video" {
+  if (file.type.startsWith("video")) return "video";
+  return "image";
+}
 
-        const likesMap = Object.fromEntries((likesAgg.data || []).map((r: any) => [r.post_id, Number(r.count)]));
-        const myLikesSet = new Set((myLikes as any).data?.map((r: any) => r.post_id) || []);
-        const commentsMap = Object.fromEntries((commentsAgg.data || []).map((r: any) => [r.post_id, Number(r.count)]));
+// -------------- Views -----------------
+type Tab = "home" | "search" | "create" | "reels" | "profile";
 
-        posts.forEach(p => {
-          p.likes_count = likesMap[p.id] || 0;
-          p.comments_count = commentsMap[p.id] || 0;
-          p.you_liked = myLikesSet.has(p.id);
-        });
-      }
+export default function App() {
+  const { user, loading } = useAuth();
+  const [active, setActive] = useState<Tab>("home");
 
-      setFeed(posts);
-    })();
-  }, [sessionUserId]);
-
-  // ---------------- Upload Post ----------------
-  async function pickPost() {
-    fileInputRef.current?.click();
-  }
-  async function onPickPost(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f || !sessionUserId) return;
-    setUploadBusy(true);
-
-    try {
-      const isImage = f.type.startsWith("image/");
-      const isVideo = f.type.startsWith("video/");
-      if (!isImage && !isVideo) {
-        alert("Only images or videos are allowed.");
-        return;
-      }
-
-      const path = `posts/${sessionUserId}/${Date.now()}-${f.name}`;
-      const { error: upErr } = await supabase.storage
-        .from("media")
-        .upload(path, f, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: f.type || (isVideo ? "video/mp4" : "image/jpeg"),
-        });
-      if (upErr) throw upErr;
-
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-      const media_url = pub.publicUrl;
-      const media_type: "image" | "video" = isVideo ? "video" : "image";
-
-      const { error: insErr } = await supabase
-        .from("posts")
-        .insert({ user_id: sessionUserId, media_url, media_type, caption: null });
-      if (insErr) throw insErr;
-
-      // Atualiza feed e contadores
-      await refreshProfileCounters(sessionUserId);
-      setTab("home");
-      // força reload de feed simples
-      window.location.reload();
-    } catch (err: any) {
-      console.error(err);
-      alert("Upload failed.");
-    } finally {
-      setUploadBusy(false);
-      e.target.value = "";
-    }
-  }
-
-  // ---------------- Avatar ----------------
-  function pickAvatar() {
-    avatarInputRef.current?.click();
-  }
-  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f || !sessionUserId) return;
-
-    try {
-      const ext = extFromName(f.name);
-      const path = `avatars/${sessionUserId}.${ext}`;
-
-      const { error: upErr } = await supabase.storage
-        .from("media")
-        .upload(path, f, {
-          upsert: true,
-          cacheControl: "3600",
-          contentType: f.type || "image/jpeg",
-        });
-      if (upErr) throw upErr;
-
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-      const avatar_url = pub.publicUrl;
-
-      const { error: upProfile } = await supabase
-        .from("profiles")
-        .update({ avatar_url })
-        .eq("id", sessionUserId);
-      if (upProfile) throw upProfile;
-
-      setMe((m) => (m ? { ...m, avatar_url } : m));
-    } catch (err: any) {
-      console.error(err);
-      alert("Could not update avatar.");
-    } finally {
-      e.target.value = "";
-    }
-  }
-
-  // ---------------- Likes ----------------
-  async function toggleLike(p: Post) {
-    if (!sessionUserId) return;
-    if (p.you_liked) {
-      const { error } = await supabase.from("likes").delete().eq("post_id", p.id).eq("user_id", sessionUserId);
-      if (error) return;
-      setFeed((list) =>
-        list.map((x) =>
-          x.id === p.id ? { ...x, you_liked: false, likes_count: Math.max(0, (x.likes_count || 1) - 1) } : x
-        )
-      );
-    } else {
-      const { error } = await supabase.from("likes").insert({ post_id: p.id, user_id: sessionUserId });
-      if (error) return;
-      setFeed((list) =>
-        list.map((x) =>
-          x.id === p.id ? { ...x, you_liked: true, likes_count: (x.likes_count || 0) + 1 } : x
-        )
-      );
-    }
-  }
-
-  // ---------------- Comments ----------------
-  async function openComments(p: Post) {
-    setCommentsOpen(true);
-    setCommentsPost(p);
-    const { data } = await supabase
-      .from("comments")
-      .select("id, post_id, user_id, content, created_at, profiles(username, avatar_url)")
-      .eq("post_id", p.id)
-      .order("created_at", { ascending: true });
-
-    const rows: Comment[] =
-      (data || []).map((c: any) => ({ ...c, user: c.profiles })) ?? [];
-    setComments(rows);
-    setNewComment("");
-  }
-
-  async function sendComment() {
-    if (!sessionUserId || !commentsPost || !newComment.trim()) return;
-    const content = newComment.trim();
-    const { error } = await supabase.from("comments").insert({
-      post_id: commentsPost.id,
-      user_id: sessionUserId,
-      content,
-    });
-    if (error) {
-      alert("Could not comment.");
-      return;
-    }
-    setNewComment("");
-    openComments(commentsPost); // recarrega
-  }
-
-  // ---------------- Delete Post ----------------
-  async function deletePost(p: Post) {
-    if (!sessionUserId || p.user_id !== sessionUserId) return;
-    if (!confirm("Delete this post?")) return;
-
-    const { error } = await supabase.from("posts").delete().eq("id", p.id);
-    if (error) {
-      alert("Could not delete.");
-      return;
-    }
-    setFeed((list) => list.filter((x) => x.id !== p.id));
-    await refreshProfileCounters(sessionUserId);
-  }
-
-  // ---------------- UI ----------------
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-gray-600">
+      <div className="flex h-screen w-full items-center justify-center text-sm text-neutral-600">
         Loading…
       </div>
     );
   }
 
-  if (!sessionUserId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="rounded-xl border p-8 max-w-sm w-full text-center">
-          <h1 className="text-2xl font-semibold mb-2">LIVET</h1>
-          <p className="text-gray-500 mb-6">Share your healthy lifestyle.</p>
-          <button
-            onClick={handleLogin}
-            className="px-4 py-2 rounded-md bg-black text-white w-full"
-          >
-            Sign in with Google
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function Header() {
-    return (
-      <div className="border-b px-4 py-3 flex items-center justify-between">
-        <div className="font-semibold">LIVET</div>
-        <div className="flex items-center gap-4">
-          {me && (
-            <div className="flex items-center gap-2">
-              <img
-                src={me.avatar_url || "https://placehold.co/40x40?text=LV"}
-                className="w-8 h-8 rounded-full object-cover cursor-pointer"
-                onClick={() => setTab("profile")}
-                alt="avatar"
-              />
-              <span className="text-sm text-gray-600">@{me.username || "user"}</span>
-            </div>
-          )}
-          <button onClick={handleLogout} className="text-sm text-gray-500 hover:underline">
-            Logout
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function BottomBar() {
-    return (
-      <div className="fixed bottom-0 left-0 right-0 border-t bg-white">
-        <div className="max-w-3xl mx-auto grid grid-cols-4 text-center">
-          <button onClick={() => setTab("home")} className={classNames("py-3", tab==="home" && "font-semibold")}>
-            Home
-          </button>
-          <button onClick={() => setTab("search")} className={classNames("py-3", tab==="search" && "font-semibold")}>
-            Search
-          </button>
-          <button onClick={() => setTab("create")} className={classNames("py-3", tab==="create" && "font-semibold")}>
-            +
-          </button>
-          <button onClick={() => setTab("profile")} className={classNames("py-3", tab==="profile" && "font-semibold")}>
-            Profile
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function MediaView({ p }: { p: Post }) {
-    if (p.media_type === "video") {
-      return (
-        <video
-          src={p.media_url}
-          className="w-full h-full object-cover rounded-lg"
-          controls
-          preload="metadata"
-        />
-      );
-    }
-    return <img src={p.media_url} className="w-full h-full object-cover rounded-lg" alt="" />;
-  }
-
-  function Feed() {
-    return (
-      <div className="max-w-3xl mx-auto p-4 pb-24">
-        {feed.length === 0 && (
-          <div className="text-center text-gray-500 py-16">No posts yet.</div>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {feed.map((p) => (
-            <div key={p.id} className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <img
-                  src={p.user?.avatar_url || "https://placehold.co/32x32?text=LV"}
-                  className="w-8 h-8 rounded-full object-cover"
-                  alt=""
-                />
-                <div className="text-sm font-medium">@{p.user?.username || "user"}</div>
-                <div className="ml-auto text-xs text-gray-500">
-                  {new Date(p.created_at).toLocaleString()}
-                </div>
-              </div>
-
-              <div className="aspect-square w-full overflow-hidden mb-3">
-                <MediaView p={p} />
-              </div>
-
-              <div className="flex items-center gap-4 text-sm">
-                <button onClick={() => toggleLike(p)}>
-                  {p.you_liked ? "Unlike" : "Like"} ({p.likes_count ?? 0})
-                </button>
-                <button onClick={() => openComments(p)}>
-                  Comments ({p.comments_count ?? 0})
-                </button>
-                {p.user_id === sessionUserId && (
-                  <button onClick={() => deletePost(p)} className="text-red-600 ml-auto">
-                    Delete
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  function Create() {
-    return (
-      <div className="max-w-xl mx-auto p-6 pb-24">
-        <div className="border rounded-xl p-6">
-          <div className="text-lg font-semibold mb-4">New post</div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,video/*"
-            className="hidden"
-            onChange={onPickPost}
-          />
-          <button
-            disabled={uploadBusy}
-            onClick={pickPost}
-            className="px-4 py-2 rounded-md bg-black text-white disabled:opacity-60"
-          >
-            {uploadBusy ? "Uploading..." : "Select photo / video"}
-          </button>
-          <p className="text-xs text-gray-500 mt-3">
-            After selection, the post appears in Home.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  function ProfilePage() {
-    const postsGrid = useMemo(() => myPosts, [myPosts]);
-
-    useEffect(() => {
-      (async () => {
-        const { data, error } = await supabase
-          .from("posts")
-          .select("id, user_id, media_url, media_type, caption, created_at")
-          .eq("user_id", sessionUserId)
-          .order("created_at", { ascending: false })
-          .limit(60);
-        if (!error) setMyPosts((data || []) as any);
-      })();
-    }, []);
-
-    return (
-      <div className="max-w-3xl mx-auto p-4 pb-24">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="relative">
-            <img
-              src={me?.avatar_url || "https://placehold.co/96x96?text=LV"}
-              className="w-20 h-20 rounded-full object-cover"
-              alt=""
-            />
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/*"
-              onChange={onPickAvatar}
-              className="hidden"
-            />
-          </div>
-          <div className="flex-1">
-            <div className="text-xl font-semibold">{me?.username || "user"}</div>
-            <div className="text-gray-500">@{me?.username || "user"}</div>
-            <div className="flex gap-6 mt-2 text-sm">
-              <div><span className="font-semibold">{counters.posts}</span> posts</div>
-              <div><span className="font-semibold">{counters.followers}</span> followers</div>
-              <div><span className="font-semibold">{counters.following}</span> following</div>
-            </div>
-          </div>
-          <button
-            onClick={pickAvatar}
-            className="px-3 py-1 rounded-md border"
-          >
-            Change photo
-          </button>
-        </div>
-
-        {postsGrid.length === 0 ? (
-          <div className="text-center text-gray-500 py-16">No posts yet.</div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {postsGrid.map((p) => (
-              <div key={p.id} className="aspect-square overflow-hidden rounded-lg">
-                <MediaView p={p} />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function CommentsModal() {
-    if (!commentsOpen || !commentsPost) return null;
-    return (
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-        <div className="bg-white rounded-xl w-full max-w-md p-4">
-          <div className="flex items-center mb-2">
-            <div className="text-lg font-semibold">Comments</div>
-            <button className="ml-auto text-sm" onClick={() => setCommentsOpen(false)}>
-              Close
-            </button>
-          </div>
-          <div className="space-y-3 max-h-72 overflow-auto">
-            {comments.length === 0 && (
-              <div className="text-sm text-gray-500">Be the first to comment</div>
-            )}
-            {comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-2">
-                <img
-                  src={c.user?.avatar_url || "https://placehold.co/24x24?text=LV"}
-                  className="w-6 h-6 rounded-full object-cover"
-                  alt=""
-                />
-                <div className="text-sm">
-                  <div className="font-medium">@{c.user?.username || "user"}</div>
-                  <div>{c.content}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex gap-2">
-            <input
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Write a comment..."
-              className="flex-1 border rounded-md px-3 py-2 text-sm"
-            />
-            <button onClick={sendComment} className="px-3 py-2 rounded-md bg-black text-white text-sm">
-              Send
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+  if (!user) {
+    return <AuthScreen />;
   }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
-      <Header />
-      {tab === "home" && <Feed />}
-      {tab === "search" && <div className="p-6 pb-24 text-center text-gray-500">Search (coming soon)</div>}
-      {tab === "create" && <Create />}
-      {tab === "profile" && <ProfilePage />}
-      <BottomBar />
-      <CommentsModal />
+    <div className="min-h-screen bg-white text-black">
+      {/* Topbar */}
+      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white">
+        <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
+          <div className="text-xl font-semibold tracking-tight">LIVET</div>
+          <UserHeader userId={user.id} />
+          <Button
+            onClick={async () => {
+              await supabase.auth.signOut();
+              location.reload();
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <LogOut className="h-4 w-4" />
+              <span>Logout</span>
+            </div>
+          </Button>
+        </div>
+      </header>
+
+      {/* Content */}
+      <main className="mx-auto w-full max-w-5xl pb-20">
+        {active === "home" && <HomeFeed currentUser={user} />}
+        {active === "search" && <SearchView />}
+        {active === "create" && <CreatePost currentUser={user} />}
+        {active === "reels" && <ReelsView />}
+        {active === "profile" && <ProfileView currentUser={user} />}
+      </main>
+
+      {/* Bottom nav */}
+      <nav className="fixed bottom-0 left-0 right-0 border-t border-neutral-200 bg-white">
+        <div className="mx-auto grid max-w-5xl grid-cols-5 px-2 py-2">
+          <NavItem icon={<Home />} label="Home" active={active === "home"} onClick={() => setActive("home")} />
+          <NavItem icon={<Search />} label="Search" active={active === "search"} onClick={() => setActive("search")} />
+          <NavItem
+            icon={<PlusSquare />}
+            label="Create"
+            active={active === "create"}
+            onClick={() => setActive("create")}
+          />
+          <NavItem icon={<Film />} label="Reels" active={active === "reels"} onClick={() => setActive("reels")} />
+          <NavItem
+            icon={<User2 />}
+            label="Profile"
+            active={active === "profile"}
+            onClick={() => setActive("profile")}
+          />
+        </div>
+      </nav>
     </div>
+  );
+}
+
+function NavItem({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center gap-1 py-1 text-xs ${active ? "text-black" : "text-neutral-500"}`}
+    >
+      <div className={`h-6 w-6 ${active ? "" : "opacity-70"}`}>{icon}</div>
+      <span className="hidden sm:block">{label}</span>
+    </button>
+  );
+}
+
+// -------------- Auth Screen --------------
+function AuthScreen() {
+  const [loading, setLoading] = useState(false);
+
+  const signIn = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) alert(error.message);
+    setLoading(false);
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="w-full max-w-sm rounded-2xl border border-neutral-200 p-6 shadow-sm">
+        <h1 className="mb-2 text-center text-2xl font-bold tracking-tight">LIVET</h1>
+        <p className="mb-6 text-center text-sm text-neutral-600">Share your healthy lifestyle.</p>
+        <Button className="w-full" onClick={signIn} disabled={loading}>
+          Sign in with Google
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// -------------- User Header (avatar + username) --------------
+function UserHeader({ userId }: { userId: string }) {
+  const [profile, setProfile] = useState<DBProfile | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    (async () => {
+      // garante que há profile
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url, followers_count, following_count")
+        .eq("id", userId)
+        .maybeSingle();
+      if (data) setProfile(data as DBProfile);
+    })();
+  }, [userId]);
+
+  const onPickAvatar = () => fileRef.current?.click();
+
+  const onChangeAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const publicUrl = await uploadToStorage({ file, folder: "avatars", userId });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ avatar_url: publicUrl })
+        .eq("id", userId);
+      if (error) throw error;
+      setProfile((p) => (p ? { ...p, avatar_url: publicUrl } : p));
+    } catch (err: any) {
+      alert("Could not update avatar.");
+      console.error(err);
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="relative h-9 w-9 overflow-hidden rounded-full ring-1 ring-neutral-200">
+        {profile?.avatar_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={profile.avatar_url} alt="avatar" className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-neutral-100 text-xs">IMG</div>
+        )}
+        <button
+          title="Change avatar"
+          onClick={onPickAvatar}
+          className="absolute -right-1 -bottom-1 rounded-full bg-white p-0.5 shadow ring-1 ring-neutral-200"
+        >
+          <Camera className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex flex-col">
+        <span className="text-sm font-semibold leading-none">{profile?.display_name || profile?.username}</span>
+        <span className="text-xs text-neutral-500">@{profile?.username}</span>
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onChangeAvatar} />
+    </div>
+  );
+}
+
+// -------------- Home Feed --------------
+function HomeFeed({ currentUser }: { currentUser: User }) {
+  const [posts, setPosts] = useState<DBPost[]>([]);
+  const [likes, setLikes] = useState<Record<string, boolean>>({});
+  const [openCommentsFor, setOpenCommentsFor] = useState<string | null>(null);
+
+  const load = async () => {
+    const { data, error } = await supabase
+      .from("posts")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    setPosts(data as DBPost[]);
+
+    // user likes map
+    const ids = (data || []).map((p) => p.id);
+    if (ids.length) {
+      const { data: mylikes } = await supabase.from("likes").select("post_id").in("post_id", ids).eq("user_id", currentUser.id);
+      const map: Record<string, boolean> = {};
+      (mylikes || []).forEach((l) => (map[l.post_id] = true));
+      setLikes(map);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const toggleLike = async (postId: string) => {
+    try {
+      if (likes[postId]) {
+        const { error } = await supabase.from("likes").delete().match({ post_id: postId, user_id: currentUser.id });
+        if (error) throw error;
+        setLikes((m) => ({ ...m, [postId]: false }));
+      } else {
+        const { error } = await supabase.from("likes").insert({ post_id: postId, user_id: currentUser.id });
+        if (error) throw error;
+        setLikes((m) => ({ ...m, [postId]: true }));
+      }
+    } catch (e) {
+      alert("Could not update like.");
+      console.error(e);
+    }
+  };
+
+  const onDelete = async (postId: string) => {
+    if (!confirm("Delete this post?")) return;
+    const { error } = await supabase.from("posts").delete().eq("id", postId).eq("user_id", currentUser.id);
+    if (error) {
+      alert("Could not delete.");
+      console.error(error);
+    } else {
+      setPosts((p) => p.filter((x) => x.id !== postId));
+    }
+  };
+
+  return (
+    <>
+      <Section>
+        {posts.length === 0 ? (
+          <div className="py-24 text-center text-sm text-neutral-500">No posts yet.</div>
+        ) : (
+          <ul className="flex flex-col gap-10">
+            {posts.map((p) => (
+              <li key={p.id} className="rounded-2xl border border-neutral-200">
+                {/* media */}
+                <div className="aspect-[4/5] w-full overflow-hidden bg-neutral-100">
+                  {p.media_type === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.media_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <video
+                      src={p.media_url}
+                      controls
+                      playsInline
+                      className="h-full w-full object-cover"
+                      preload="metadata"
+                    />
+                  )}
+                </div>
+
+                {/* actions */}
+                <div className="flex items-center justify-between px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <IconButton onClick={() => toggleLike(p.id)}>
+                      <Heart className={`h-5 w-5 ${likes[p.id] ? "fill-red-500 text-red-500" : ""}`} />
+                    </IconButton>
+                    <IconButton onClick={() => setOpenCommentsFor(p.id)}>
+                      <MessageSquare className="h-5 w-5" />
+                    </IconButton>
+                  </div>
+                  {p.user_id === currentUser.id && (
+                    <IconButton onClick={() => onDelete(p.id)}>
+                      <Trash2 className="h-5 w-5 text-neutral-700" />
+                    </IconButton>
+                  )}
+                </div>
+
+                {/* caption */}
+                {p.caption ? (
+                  <div className="px-3 pb-3 text-sm text-neutral-800">{p.caption}</div>
+                ) : null}
+
+                {openCommentsFor === p.id && (
+                  <CommentsSheet postId={p.id} onClose={() => setOpenCommentsFor(null)} />
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// -------------- Comments --------------
+function CommentsSheet({ postId, onClose }: { postId: string; onClose: () => void }) {
+  const [items, setItems] = useState<DBComment[]>([]);
+  const [text, setText] = useState("");
+
+  const load = async () => {
+    const { data, error } = await supabase
+      .from("comments")
+      .select("id, post_id, user_id, content, created_at, profiles(id,username,display_name,avatar_url)")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true });
+    if (!error) setItems(data as any);
+  };
+
+  useEffect(() => {
+    load();
+  }, [postId]);
+
+  const onSend = async () => {
+    if (!text.trim()) return;
+    const { error } = await supabase.from("comments").insert({ post_id: postId, content: text });
+    if (error) {
+      alert("Could not comment.");
+      console.error(error);
+      return;
+    }
+    setText("");
+    load();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="font-medium">Comments</div>
+          <Button onClick={onClose}>Close</Button>
+        </div>
+        <div className="max-h-[50vh] space-y-3 overflow-y-auto px-4 py-3">
+          {items.length === 0 ? (
+            <div className="py-8 text-center text-sm text-neutral-500">Be the first to comment</div>
+          ) : (
+            items.map((c) => (
+              <div key={c.id} className="flex items-start gap-3">
+                <div className="h-7 w-7 overflow-hidden rounded-full bg-neutral-100" />
+                <div className="rounded-2xl bg-neutral-100 px-3 py-2 text-sm">{c.content}</div>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex gap-2 border-t p-3">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Add a comment…"
+            className="flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-400"
+          />
+          <Button onClick={onSend}>Send</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -------------- Create Post --------------
+function CreatePost({ currentUser }: { currentUser: User }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [caption, setCaption] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const mediaType = useMemo(() => (file ? getMediaType(file) : null), [file]);
+
+  const pick = () => inputRef.current?.click();
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+  };
+
+  const onPublish = async () => {
+    if (!file) return;
+    try {
+      const url = await uploadToStorage({ file, folder: "posts", userId: currentUser.id });
+      const { error } = await supabase
+        .from("posts")
+        .insert({
+          media_url: url,
+          media_type: mediaType,
+          caption: caption || null,
+        } as any);
+      if (error) throw error;
+      alert("Your post is live in Home.");
+      setFile(null);
+      setCaption("");
+    } catch (e: any) {
+      alert("Upload failed.");
+      console.error(e);
+    }
+  };
+
+  return (
+    <Section title="Create new post">
+      <div className="rounded-2xl border border-neutral-200 p-4">
+        {!file ? (
+          <div className="flex flex-col items-center gap-3 py-10">
+            <p className="text-sm text-neutral-600">Select a photo or video to share</p>
+            <Button onClick={pick}>Select photo / video</Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="aspect-[4/5] w-full overflow-hidden rounded-lg bg-neutral-100">
+              {mediaType === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={URL.createObjectURL(file)} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <video
+                  src={URL.createObjectURL(file)}
+                  controls
+                  playsInline
+                  className="h-full w-full object-cover"
+                  preload="metadata"
+                />
+              )}
+            </div>
+            <input
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+              placeholder="Write a caption (optional)"
+              className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-400"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <Button onClick={() => setFile(null)} className="border-neutral-300">
+                Clear
+              </Button>
+              <Button onClick={onPublish}>Publish</Button>
+            </div>
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*,video/*"
+          className="hidden"
+          onChange={onChange}
+        />
+      </div>
+    </Section>
+  );
+}
+
+// -------------- Profile --------------
+function ProfileView({ currentUser }: { currentUser: User }) {
+  const [profile, setProfile] = useState<DBProfile | null>(null);
+  const [posts, setPosts] = useState<DBPost[]>([]);
+
+  const load = async () => {
+    const [{ data: prof }, { data: postsData }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url, followers_count, following_count")
+        .eq("id", currentUser.id)
+        .maybeSingle(),
+      supabase.from("posts").select("*").eq("user_id", currentUser.id).order("created_at", { ascending: false }),
+    ]);
+    if (prof) {
+      const p = prof as DBProfile;
+      p.posts_count = (postsData || []).length;
+      setProfile(p);
+    }
+    setPosts((postsData as DBPost[]) || []);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  return (
+    <>
+      <Section>
+        <div className="flex items-center gap-4">
+          <div className="h-20 w-20 overflow-hidden rounded-full ring-1 ring-neutral-200">
+            {profile?.avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={profile.avatar_url} alt="avatar" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-neutral-100 text-sm">IMG</div>
+            )}
+          </div>
+          <div className="flex flex-col">
+            <div className="text-xl font-semibold leading-tight">
+              {profile?.display_name || profile?.username}
+            </div>
+            <div className="text-sm text-neutral-500">@{profile?.username}</div>
+            <div className="mt-3 flex gap-6 text-sm">
+              <div>
+                <span className="font-semibold">{profile?.posts_count ?? 0}</span> posts
+              </div>
+              <div>
+                <span className="font-semibold">{profile?.followers_count ?? 0}</span> followers
+              </div>
+              <div>
+                <span className="font-semibold">{profile?.following_count ?? 0}</span> following
+              </div>
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section>
+        {posts.length === 0 ? (
+          <div className="py-24 text-center text-sm text-neutral-500">No posts yet.</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {posts.map((p) => (
+              <div key={p.id} className="group relative aspect-square overflow-hidden rounded-lg bg-neutral-100">
+                {p.media_type === "image" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.media_url} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <video src={p.media_url} className="h-full w-full object-cover" controls playsInline preload="metadata" />
+                )}
+                <div className="pointer-events-none absolute inset-0 hidden items-center justify-center bg-black/20 group-hover:flex" />
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+// -------------- Other tabs --------------
+function SearchView() {
+  return (
+    <Section title="Search">
+      <div className="rounded-2xl border border-neutral-200 p-6 text-sm text-neutral-600">
+        Coming soon.
+      </div>
+    </Section>
+  );
+}
+
+function ReelsView() {
+  return (
+    <Section title="Reels">
+      <div className="rounded-2xl border border-neutral-200 p-6 text-sm text-neutral-600">
+        Coming soon.
+      </div>
+    </Section>
   );
 }
