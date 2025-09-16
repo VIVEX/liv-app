@@ -1,8 +1,8 @@
 // src/App.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// ---- Supabase client (browser) ----
+// ---- Supabase client ----
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseAnon = (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string;
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
@@ -42,7 +42,7 @@ const isVideo = (file: File) =>
 const mediaTypeFromUrl = (url: string): "image" | "video" =>
   /\.(mp4|mov|webm|m4v)$/i.test(url) ? "video" : "image";
 
-// ---- UI atoms ----
+// ---- UI ----
 function Btn(props: JSX.IntrinsicElements["button"]) {
   const { className = "", ...rest } = props;
   return (
@@ -97,7 +97,7 @@ export default function App() {
   const [feed, setFeed] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // comment modal
+  // comments
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [activePost, setActivePost] = useState<Post | null>(null);
   const [comments, setComments] = useState<
@@ -134,11 +134,7 @@ export default function App() {
       return;
     }
     (async () => {
-      // upsert profile (creates if missing)
-      await supabase
-        .from("profiles")
-        .upsert({ id: userId }, { onConflict: "id" });
-
+      await supabase.from("profiles").upsert({ id: userId }, { onConflict: "id" });
       const { data } = await supabase
         .from("profiles")
         .select("id, full_name, username, avatar_url, status")
@@ -173,7 +169,6 @@ export default function App() {
         .order("created_at", { ascending: false });
 
       if (!error) {
-        // mark like by me
         const ids = data?.map((p) => p.id) ?? [];
         let liked: Record<string, boolean> = {};
         if (userId && ids.length) {
@@ -212,6 +207,9 @@ export default function App() {
   function openFilePicker() {
     fileInputRef.current?.click();
   }
+  function openAvatarPicker() {
+    avatarInputRef.current?.click();
+  }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -235,7 +233,6 @@ export default function App() {
         .insert({ user_id: userId, media_url, media_type, caption: null });
       if (insErr) throw insErr;
 
-      // refresh
       setView("home");
     } catch (err: any) {
       alert(err.message || "Upload failed.");
@@ -245,9 +242,6 @@ export default function App() {
     }
   }
 
-  function openAvatarPicker() {
-    avatarInputRef.current?.click();
-  }
   async function handleAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
@@ -332,7 +326,7 @@ export default function App() {
       return;
     }
     setNewComment("");
-    openComments(activePost); // reload
+    openComments(activePost);
     setFeed((arr) =>
       arr.map((p) =>
         p.id === activePost.id
@@ -376,9 +370,7 @@ export default function App() {
       alert(error.message);
       return;
     }
-    setProfile((p) =>
-      p ? { ...p, ...payload } : p
-    );
+    setProfile((p) => (p ? { ...p, ...payload } : p));
     setEditOpen(false);
   }
 
@@ -430,7 +422,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Profile header (always visible if logged) */}
+      {/* Profile header */}
       {signedIn && profile && (
         <div className="px-4 py-4 border-b">
           <div className="flex items-center gap-4">
@@ -442,8 +434,8 @@ export default function App() {
               <div className="text-gray-500 truncate">
                 @{profile.username || "username"}
               </div>
-              <div className="text-sm text-gray-600 mt-1">
-                {profile.status || "No status set"}
+              <div className="mt-1 text-sm text-green-600">
+                {profile.status || ""}
               </div>
               <div className="mt-2 flex gap-6 text-sm">
                 <div><b>{feed.filter(p=>p.user_id===profile.id).length}</b> posts</div>
@@ -485,7 +477,6 @@ export default function App() {
 
       {/* Views */}
       <div className="p-4">
-        {/* HOME & PROFILE share the same grid; PROFILE filtra os meus */}
         {(view === "home" || view === "profile") && (
           <>
             {!feed.length && (
@@ -513,5 +504,4 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Post actions */}
-                    <div className="mt-2 flex items-center justify-between
+                    {/* Post
