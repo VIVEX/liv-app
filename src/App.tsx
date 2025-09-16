@@ -15,7 +15,6 @@ type Profile = {
   full_name: string | null;
   username: string | null;
   avatar_url: string | null;
-  status?: "pending" | "approved" | "rejected" | null;
   followers_count?: number | null;
   following_count?: number | null;
   posts_count?: number | null;
@@ -114,7 +113,7 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  /* ------------ Ensure profile row exists + load it ------------ */
+  /* ------------ Ensure profile + load it ------------ */
   useEffect(() => {
     if (!userId) {
       setProfile(null);
@@ -124,7 +123,7 @@ export default function App() {
       await supabase.from("profiles").upsert({ id: userId }, { onConflict: "id" });
       const { data } = await supabase
         .from("profiles")
-        .select("id, full_name, username, avatar_url, status")
+        .select("id, full_name, username, avatar_url")
         .eq("id", userId)
         .maybeSingle();
       setProfile(
@@ -133,7 +132,6 @@ export default function App() {
           full_name: null,
           username: null,
           avatar_url: null,
-          status: null,
         }
       );
     })();
@@ -233,7 +231,8 @@ export default function App() {
     setLoading(true);
     try {
       const ext = f.name.split(".").pop() || "jpg";
-      const path = `avatars/${userId}/${Date.now()}.${ext}`; // compatível com suas policies
+      // compatível com suas policies (pasta por user + timestamp)
+      const path = `avatars/${userId}/${Date.now()}.${ext}`;
       const { error: upErr } = await supabase
         .storage
         .from("media")
@@ -389,22 +388,6 @@ export default function App() {
             <div className="min-w-0">
               <div className="text-lg font-semibold truncate">{profile.full_name || "Your name"}</div>
               <div className="text-gray-500 truncate">@{profile.username || "username"}</div>
-              {profile.status && (
-                <div className="mt-1 text-sm">
-                  Status:{" "}
-                  <span
-                    className={
-                      profile.status === "approved"
-                        ? "text-green-600"
-                        : profile.status === "pending"
-                        ? "text-amber-600"
-                        : "text-red-600"
-                    }
-                  >
-                    {profile.status}
-                  </span>
-                </div>
-              )}
               <div className="mt-2 flex gap-6 text-sm">
                 <div>
                   <b>{feed.filter((p) => p.user_id === profile.id).length}</b> posts
