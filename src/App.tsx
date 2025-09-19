@@ -1,15 +1,15 @@
 // src/App.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-/* ---------------- Supabase client ---------------- */
+// ---- Supabase client (browser) ----
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseAnon = (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string;
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
   auth: { persistSession: true, flowType: "pkce", detectSessionInUrl: true },
 });
 
-/* ---------------- Types ---------------- */
+// ---- Types ----
 type Profile = {
   id: string;
   full_name: string | null;
@@ -33,12 +33,15 @@ type Post = {
   liked_by_me?: boolean;
 };
 
-/* ---------------- Helpers ---------------- */
+// ---- Helpers ----
 const isVideo = (file: File) =>
   file.type.startsWith("video/") ||
   /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
 
-/* ---------------- UI atoms ---------------- */
+const mediaTypeFromUrl = (url: string): "image" | "video" =>
+  /\.(mp4|mov|webm|m4v)$/i.test(url) ? "video" : "image";
+
+// ---- UI atoms ----
 function Btn(props: JSX.IntrinsicElements["button"]) {
   const { className = "", ...rest } = props;
   return (
@@ -62,11 +65,19 @@ function Modal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-black">✕</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-black">
+            ✕
+          </button>
         </div>
         <div className="p-4">{children}</div>
       </div>
@@ -74,16 +85,18 @@ function Modal({
   );
 }
 
-/* ---------------- Main App ---------------- */
+// ---- Main App ----
 export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [view, setView] = useState<"home" | "search" | "post" | "profile">("home");
+  const [view, setView] = useState<"home" | "search" | "post" | "profile">(
+    "home"
+  );
   const [profile, setProfile] = useState<Profile | null>(null);
   const [feed, setFeed] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // comments
+  // comment modal
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [activePost, setActivePost] = useState<Post | null>(null);
   const [comments, setComments] = useState<
@@ -91,16 +104,16 @@ export default function App() {
   >([]);
   const [newComment, setNewComment] = useState("");
 
-  // edit profile
+  // edit profile modal
   const [editOpen, setEditOpen] = useState(false);
   const [editFullName, setEditFullName] = useState("");
   const [editUsername, setEditUsername] = useState("");
 
-  // file inputs
+  // upload refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  /* ------------ Auth bootstrap ------------ */
+  // ---- Auth bootstrap ----
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
@@ -113,14 +126,17 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  /* ------------ Ensure profile + load it ------------ */
+  // ---- Ensure profile row exists ----
   useEffect(() => {
     if (!userId) {
       setProfile(null);
       return;
     }
     (async () => {
-      await supabase.from("profiles").upsert({ id: userId }, { onConflict: "id" });
+      await supabase
+        .from("profiles")
+        .upsert({ id: userId }, { onConflict: "id" });
+
       const { data } = await supabase
         .from("profiles")
         .select("id, full_name, username, avatar_url")
@@ -137,18 +153,20 @@ export default function App() {
     })();
   }, [userId]);
 
-  /* ------------ Load feed ------------ */
+  // ---- Load feed ----
   useEffect(() => {
     if (!sessionLoaded) return;
     (async () => {
       const { data, error } = await supabase
         .from("posts")
-        .select(`
+        .select(
+          `
           id, user_id, media_url, media_type, caption, created_at,
           author:profiles ( id, full_name, username, avatar_url ),
           likes_count:likes(count),
           comments_count:comments(count)
-        `)
+        `
+        )
         .order("created_at", { ascending: false });
 
       if (!error) {
@@ -174,14 +192,19 @@ export default function App() {
     })();
   }, [sessionLoaded, userId, view]);
 
-  /* ------------ Actions ------------ */
+  // ---- Actions ----
   async function signIn() {
+    const redirectTo = import.meta.env.DEV
+      ? "http://localhost:5173"
+      : "https://liv-app-xx.vercel.app"; // seu domínio de produção
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo },
     });
     if (error) alert(error.message);
   }
+
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) alert(error.message);
@@ -189,9 +212,6 @@ export default function App() {
 
   function openFilePicker() {
     fileInputRef.current?.click();
-  }
-  function openAvatarPicker() {
-    avatarInputRef.current?.click();
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -225,18 +245,21 @@ export default function App() {
     }
   }
 
+  function openAvatarPicker() {
+    avatarInputRef.current?.click();
+  }
+
   async function handleAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
     setLoading(true);
     try {
       const ext = f.name.split(".").pop() || "jpg";
-      // compatível com suas policies (pasta por user + timestamp)
-      const path = `avatars/${userId}/${Date.now()}.${ext}`;
+      const path = `avatars/${userId}.${ext}`;
       const { error: upErr } = await supabase
         .storage
         .from("media")
-        .upload(path, f, { upsert: false, contentType: f.type || "image/jpeg" });
+        .upload(path, f, { upsert: true, contentType: f.type || undefined });
       if (upErr) throw upErr;
 
       const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
@@ -265,14 +288,18 @@ export default function App() {
       await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
       setFeed((arr) =>
         arr.map((p) =>
-          p.id === post.id ? { ...p, liked_by_me: false, likes_count: (p.likes_count ?? 1) - 1 } : p
+          p.id === post.id
+            ? { ...p, liked_by_me: false, likes_count: (p.likes_count ?? 1) - 1 }
+            : p
         )
       );
     } else {
       await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
       setFeed((arr) =>
         arr.map((p) =>
-          p.id === post.id ? { ...p, liked_by_me: true, likes_count: (p.likes_count ?? 0) + 1 } : p
+          p.id === post.id
+            ? { ...p, liked_by_me: true, likes_count: (p.likes_count ?? 0) + 1 }
+            : p
         )
       );
     }
@@ -287,7 +314,11 @@ export default function App() {
       .eq("post_id", post.id)
       .order("created_at", { ascending: true });
     setComments(
-      (data ?? []).map((c: any) => ({ id: c.id, content: c.content, user: c.user }))
+      (data ?? []).map((c: any) => ({
+        id: c.id,
+        content: c.content,
+        user: c.user,
+      }))
     );
   }
 
@@ -305,7 +336,9 @@ export default function App() {
     openComments(activePost);
     setFeed((arr) =>
       arr.map((p) =>
-        p.id === activePost.id ? { ...p, comments_count: (p.comments_count ?? 0) + 1 } : p
+        p.id === activePost.id
+          ? { ...p, comments_count: (p.comments_count ?? 0) + 1 }
+          : p
       )
     );
   }
@@ -344,21 +377,35 @@ export default function App() {
       alert(error.message);
       return;
     }
-    setProfile((p) => (p ? { ...p, ...payload } : p));
+    setProfile((p) =>
+      p ? { ...p, ...payload } : p
+    );
     setEditOpen(false);
   }
 
-  /* ------------ Render ------------ */
+  // ---- Renderers ----
   const signedIn = !!userId;
 
   const avatar = (
     <div className="relative h-20 w-20 shrink-0">
       {profile?.avatar_url ? (
-        <img src={profile.avatar_url} className="h-20 w-20 rounded-full object-cover border" alt="avatar" />
+        <img
+          src={profile.avatar_url}
+          className="h-20 w-20 rounded-full object-cover border"
+          alt="avatar"
+        />
       ) : (
-        <div className="h-20 w-20 rounded-full bg-gray-200 grid place-items-center text-gray-500 border">IMG</div>
+        <div className="h-20 w-20 rounded-full bg-gray-200 grid place-items-center text-gray-500 border">
+          IMG
+        </div>
       )}
-      <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
+      <input
+        ref={avatarInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleAvatar}
+      />
       <button
         onClick={openAvatarPicker}
         className="absolute bottom-0 right-0 text-xs rounded-md bg-black/70 text-white px-2 py-0.5"
@@ -375,7 +422,11 @@ export default function App() {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="font-bold tracking-wide">LIVET</div>
           <div className="flex items-center gap-2">
-            {!signedIn ? <Btn onClick={signIn}>Sign in with Google</Btn> : <Btn onClick={signOut}>Logout</Btn>}
+            {!signedIn ? (
+              <Btn onClick={signIn}>Sign in with Google</Btn>
+            ) : (
+              <Btn onClick={signOut}>Logout</Btn>
+            )}
           </div>
         </div>
       </div>
@@ -386,18 +437,16 @@ export default function App() {
           <div className="flex items-center gap-4">
             {avatar}
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">{profile.full_name || "Your name"}</div>
-              <div className="text-gray-500 truncate">@{profile.username || "username"}</div>
+              <div className="text-lg font-semibold truncate">
+                {profile.full_name || "Your name"}
+              </div>
+              <div className="text-gray-500 truncate">
+                @{profile.username || "username"}
+              </div>
               <div className="mt-2 flex gap-6 text-sm">
-                <div>
-                  <b>{feed.filter((p) => p.user_id === profile.id).length}</b> posts
-                </div>
-                <div>
-                  <b>{profile.followers_count ?? 0}</b> followers
-                </div>
-                <div>
-                  <b>{profile.following_count ?? 0}</b> following
-                </div>
+                <div><b>{feed.filter(p=>p.user_id===profile.id).length}</b> posts</div>
+                <div><b>{profile.followers_count ?? 0}</b> followers</div>
+                <div><b>{profile.following_count ?? 0}</b> following</div>
               </div>
             </div>
           </div>
@@ -423,7 +472,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* Hidden input for uploads */}
+      {/* Hidden inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -437,9 +486,10 @@ export default function App() {
         {(view === "home" || view === "profile") && (
           <>
             {!feed.length && (
-              <div className="text-center text-gray-500 py-20">No posts yet.</div>
+              <div className="text-center text-gray-500 py-20">
+                No posts yet.
+              </div>
             )}
-
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {feed
                 .filter((p) => (view === "profile" && userId ? p.user_id === userId : true))
@@ -462,105 +512,4 @@ export default function App() {
 
                     {/* Post actions */}
                     <div className="mt-2 flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => toggleLike(p)}
-                          className={p.liked_by_me ? "font-semibold" : ""}
-                        >
-                          ♥️ {p.likes_count ?? 0}
-                        </button>
-                        <button onClick={() => openComments(p)}>
-                          💬 {p.comments_count ?? 0}
-                        </button>
-                      </div>
-                      {userId === p.user_id && (
-                        <button
-                          onClick={() => deletePost(p)}
-                          className="text-red-600"
-                          title="Delete post"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </>
-        )}
-
-        {view === "search" && (
-          <div className="text-center text-gray-500 py-20">Search (coming soon).</div>
-        )}
-
-        {view === "post" && (
-          <div className="text-center py-20">
-            <div className="mb-3 text-gray-500">After selection, the post appears in Home.</div>
-            <Btn onClick={openFilePicker} disabled={loading}>
-              {loading ? "Uploading..." : "Select photo/video"}
-            </Btn>
-          </div>
-        )}
-      </div>
-
-      {/* Edit profile modal */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit profile">
-        <div className="space-y-3">
-          <label className="block">
-            <div className="text-sm text-gray-600">Full name</div>
-            <input
-              className="mt-1 w-full rounded-md border px-3 py-2"
-              value={editFullName}
-              onChange={(e) => setEditFullName(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            <div className="text-sm text-gray-600">Username</div>
-            <input
-              className="mt-1 w-full rounded-md border px-3 py-2"
-              value={editUsername}
-              onChange={(e) => setEditUsername(e.target.value)}
-            />
-          </label>
-          <div className="flex justify-end gap-2 pt-2">
-            <Btn onClick={() => setEditOpen(false)}>Cancel</Btn>
-            <Btn onClick={saveProfile}>Save</Btn>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Comments modal */}
-      <Modal open={commentsOpen} onClose={() => setCommentsOpen(false)} title="Comments">
-        <div className="space-y-3">
-          <div className="max-h-64 overflow-auto space-y-2">
-            {comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-2">
-                <img
-                  src={c.user.avatar_url || ""}
-                  onError={(e) => ((e.currentTarget.style.display = "none"))}
-                  className="h-7 w-7 rounded-full object-cover border"
-                />
-                <div>
-                  <div className="text-sm font-medium">@{c.user.username}</div>
-                  <div className="text-sm">{c.content}</div>
-                </div>
-              </div>
-            ))}
-            {!comments.length && (
-              <div className="text-sm text-gray-500">Be the first to comment</div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              className="flex-1 rounded-md border px-3 py-2"
-              placeholder="Write a comment…"
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-            />
-            <Btn onClick={submitComment}>Send</Btn>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  );
-}
+                      <div
