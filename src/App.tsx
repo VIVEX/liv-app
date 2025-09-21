@@ -38,9 +38,6 @@ const isVideo = (file: File) =>
   file.type.startsWith("video/") ||
   /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
 
-const mediaTypeFromUrl = (url: string): "image" | "video" =>
-  /\.(mp4|mov|webm|m4v)$/i.test(url) ? "video" : "image";
-
 // ---- UI ----
 function Btn(props: JSX.IntrinsicElements["button"]) {
   const { className = "", ...rest } = props;
@@ -124,20 +121,32 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ---- Ensure profile exists ----
+  // ---- Ensure profile row exists (sem upsert/on_conflict) ----
   useEffect(() => {
     if (!userId) {
       setProfile(null);
       return;
     }
     (async () => {
-      await supabase.from("profiles").upsert({ id: userId }, { onConflict: "id" });
+      // 1) existe?
+      const { data: exists, error: selErr } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", userId)
+        .maybeSingle();
 
+      // 2) se não existir, cria (INSERT) — requer policy FOR INSERT id = auth.uid()
+      if (!selErr && !exists) {
+        await supabase.from("profiles").insert({ id: userId });
+      }
+
+      // 3) carrega dados
       const { data } = await supabase
         .from("profiles")
         .select("id, full_name, username, avatar_url")
         .eq("id", userId)
         .maybeSingle();
+
       setProfile(
         data ?? { id: userId, full_name: null, username: null, avatar_url: null }
       );
@@ -193,7 +202,7 @@ export default function App() {
       },
     });
     if (error) alert(error.message);
-    if (data?.url) window.location.href = data.url;
+    if (data?.url) window.location.href = data.url; // Safari
   }
   async function signOut() {
     const { error } = await supabase.auth.signOut();
@@ -504,4 +513,108 @@ export default function App() {
                       <div className="flex items-center gap-3">
                         <button
                           onClick={() => toggleLike(p)}
-                          className={p.liked_by_me
+                          className={p.liked_by_me ? "font-semibold" : ""}
+                        >
+                          ♥️ {p.likes_count ?? 0}
+                        </button>
+                        <button onClick={() => openComments(p)}>
+                          💬 {p.comments_count ?? 0}
+                        </button>
+                      </div>
+                      {userId === p.user_id && (
+                        <button
+                          onClick={() => deletePost(p)}
+                          className="text-red-600"
+                          title="Delete post"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </>
+        )}
+
+        {view === "search" && (
+          <div className="text-center text-gray-500 py-20">Search (coming soon).</div>
+        )}
+
+        {view === "post" && (
+          <div className="text-center py-20">
+            <div className="mb-3 text-gray-500">
+              After selection, the post appears in Home.
+            </div>
+            <Btn onClick={openFilePicker} disabled={loading}>
+              {loading ? "Uploading..." : "Select photo/video"}
+            </Btn>
+          </div>
+        )}
+      </div>
+
+      {/* Edit profile modal */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit profile">
+        <div className="space-y-3">
+          <label className="block">
+            <div className="text-sm text-gray-600">Full name</div>
+            <input
+              className="mt-1 w-full rounded-md border px-3 py-2"
+              value={editFullName}
+              onChange={(e) => setEditFullName(e.target.value)}
+            />
+          </label>
+          <label className="block">
+            <div className="text-sm text-gray-600">Username</div>
+            <input
+              className="mt-1 w-full rounded-md border px-3 py-2"
+              value={editUsername}
+              onChange={(e) => setEditUsername(e.target.value)}
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Btn onClick={() => setEditOpen(false)}>Cancel</Btn>
+            <Btn onClick={saveProfile}>Save</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Comments modal */}
+      <Modal
+        open={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        title="Comments"
+      >
+        <div className="space-y-3">
+          <div className="max-h-64 overflow-auto space-y-2">
+            {comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-2">
+                <img
+                  src={c.user.avatar_url || ""}
+                  onError={(e) => ((e.currentTarget.style.display = "none"))}
+                  className="h-7 w-7 rounded-full object-cover border"
+                />
+                <div>
+                  <div className="text-sm font-medium">@{c.user.username}</div>
+                  <div className="text-sm">{c.content}</div>
+                </div>
+              </div>
+            ))}
+            {!comments.length && (
+              <div className="text-sm text-gray-500">Be the first to comment</div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              className="flex-1 rounded-md border px-3 py-2"
+              placeholder="Write a comment…"
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+            />
+            <Btn onClick={submitComment}>Send</Btn>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
