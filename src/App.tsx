@@ -89,9 +89,7 @@ function Modal({
 export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [view, setView] = useState<"home" | "search" | "post" | "profile">(
-    "home"
-  );
+  const [view, setView] = useState<"home" | "search" | "post" | "profile">("home");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [feed, setFeed] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
@@ -109,11 +107,11 @@ export default function App() {
   const [editFullName, setEditFullName] = useState("");
   const [editUsername, setEditUsername] = useState("");
 
-  // upload refs
+  // refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  // ---- Auth bootstrap ----
+  // ---- Auth ----
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
@@ -140,19 +138,13 @@ export default function App() {
         .select("id, full_name, username, avatar_url")
         .eq("id", userId)
         .maybeSingle();
-
       setProfile(
-        data ?? {
-          id: userId,
-          full_name: null,
-          username: null,
-          avatar_url: null,
-        }
+        data ?? { id: userId, full_name: null, username: null, avatar_url: null }
       );
     })();
   }, [userId]);
 
-  // ---- Load feed ----
+  // ---- Feed ----
   useEffect(() => {
     if (!sessionLoaded) return;
     (async () => {
@@ -193,29 +185,16 @@ export default function App() {
 
   // ---- Actions ----
   async function signIn() {
-    const redirectTo = import.meta.env.DEV
-      ? "http://localhost:5173"
-      : "https://liv-app-xx.vercel.app";
-
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo,
-        skipBrowserRedirect: true,
+        redirectTo: window.location.origin,
+        skipBrowserRedirect: false,
       },
     });
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-    if (data?.url) {
-      window.location.assign(data.url);
-    } else {
-      alert("Não foi possível iniciar o login.");
-    }
+    if (error) alert(error.message);
+    if (data?.url) window.location.href = data.url;
   }
-
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) alert(error.message);
@@ -224,6 +203,7 @@ export default function App() {
   function openFilePicker() {
     fileInputRef.current?.click();
   }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
@@ -367,6 +347,7 @@ export default function App() {
     setEditUsername(profile.username ?? "");
     setEditOpen(true);
   }
+
   async function saveProfile() {
     if (!userId) return;
     const payload: Partial<Profile> = {
@@ -387,7 +368,7 @@ export default function App() {
     setEditOpen(false);
   }
 
-  // ---- Renderers ----
+  // ---- Render ----
   const signedIn = !!userId;
 
   const avatar = (
@@ -500,17 +481,12 @@ export default function App() {
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {feed
-                .filter((p) =>
-                  view === "profile" && userId ? p.user_id === userId : true
-                )
+                .filter((p) => (view === "profile" && userId ? p.user_id === userId : true))
                 .map((p) => (
                   <div key={p.id} className="relative">
                     <div className="aspect-square overflow-hidden rounded-xl border">
                       {p.media_type === "image" ? (
-                        <img
-                          src={p.media_url}
-                          className="h-full w-full object-cover"
-                        />
+                        <img src={p.media_url} className="h-full w-full object-cover" />
                       ) : (
                         <video
                           src={p.media_url}
@@ -523,4 +499,9 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Post actions
+                    {/* Post actions */}
+                    <div className="mt-2 flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => toggleLike(p)}
+                          className={p.liked_by_me
