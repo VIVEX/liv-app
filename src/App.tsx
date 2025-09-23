@@ -2,14 +2,19 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// ---- Supabase client ----
+/* ========= Supabase client ========= */
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseAnon = (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string;
+
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
-  auth: { persistSession: true, flowType: "pkce", detectSessionInUrl: true },
+  auth: {
+    persistSession: true,
+    flowType: "pkce",
+    detectSessionInUrl: true,
+  },
 });
 
-// ---- Types ----
+/* ========= Types ========= */
 type Profile = {
   id: string;
   full_name: string | null;
@@ -33,12 +38,7 @@ type Post = {
   liked_by_me?: boolean;
 };
 
-// ---- Helpers ----
-const isVideo = (file: File) =>
-  file.type.startsWith("video/") ||
-  /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
-
-// ---- UI ----
+/* ========= Small UI atoms ========= */
 function Btn(props: JSX.IntrinsicElements["button"]) {
   const { className = "", ...rest } = props;
   return (
@@ -52,8 +52,8 @@ function Btn(props: JSX.IntrinsicElements["button"]) {
 function Modal({
   open,
   onClose,
-  children,
   title,
+  children,
 }: {
   open: boolean;
   onClose: () => void;
@@ -82,11 +82,26 @@ function Modal({
   );
 }
 
-// ---- Main App ----
+/* ========= Helpers ========= */
+const isVideo = (file: File) =>
+  file.type.startsWith("video/") ||
+  /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
+
+function extFromFile(f: File) {
+  const ext = f.name.split(".").pop();
+  if (ext) return ext.toLowerCase();
+  return isVideo(f) ? "mp4" : "jpg";
+}
+
+/* ========= App ========= */
 export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [view, setView] = useState<"home" | "search" | "post" | "profile">("home");
+
+  const [view, setView] = useState<"home" | "search" | "post" | "profile">(
+    "home"
+  );
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [feed, setFeed] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
@@ -104,56 +119,75 @@ export default function App() {
   const [editFullName, setEditFullName] = useState("");
   const [editUsername, setEditUsername] = useState("");
 
-  // refs
+  // file inputs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  // ---- Auth ----
+  /* ===== AUTH bootstrap + profile upsert fallback ===== */
   useEffect(() => {
+    // se o Supabase mandou erro na URL, mostra
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("error_description");
+    if (err) {
+      // limpa a query string para não repetir
+      window.history.replaceState({}, "", window.location.origin);
+      alert(err);
+    }
+
     supabase.auth.getSession().then(({ data }) => {
-      setUserId(data.session?.user.id ?? null);
+      const uid = data.session?.user?.id ?? null;
+      setUserId(uid);
       setSessionLoaded(true);
+      if (uid) ensureProfileExists(uid);
     });
+
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setUserId(s?.user?.id ?? null);
+      const uid = s?.user?.id ?? null;
+      setUserId(uid);
       setSessionLoaded(true);
+      if (uid) ensureProfileExists(uid);
     });
+
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ---- Ensure profile row exists (sem upsert/on_conflict) ----
-  useEffect(() => {
-    if (!userId) {
-      setProfile(null);
-      return;
-    }
-    (async () => {
-      // 1) existe?
-      const { data: exists, error: selErr } = await supabase
+  /** cria/garante uma linha em profiles sem depender de trigger */
+  async function ensureProfileExists(uid: string) {
+    try {
+      // tenta ler
+      const { data: got } = await supabase
         .from("profiles")
-        .select("id")
-        .eq("id", userId)
+        .select("id, full_name, username, avatar_url")
+        .eq("id", uid)
         .maybeSingle();
-
-      // 2) se não existir, cria (INSERT) — requer policy FOR INSERT id = auth.uid()
-      if (!selErr && !exists) {
-        await supabase.from("profiles").insert({ id: userId });
+      if (got) {
+        setProfile(got);
+        return;
       }
+      // cria (upsert só com id, sem conflito)
+      await supabase.from("profiles").upsert({ id: uid }, { onConflict: "id" });
 
-      // 3) carrega dados
+      // lê novamente
       const { data } = await supabase
         .from("profiles")
         .select("id, full_name, username, avatar_url")
-        .eq("id", userId)
+        .eq("id", uid)
         .maybeSingle();
 
       setProfile(
-        data ?? { id: userId, full_name: null, username: null, avatar_url: null }
+        data ?? {
+          id: uid,
+          full_name: null,
+          username: null,
+          avatar_url: null,
+        }
       );
-    })();
-  }, [userId]);
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
-  // ---- Feed ----
+  /* ===== FEED ===== */
   useEffect(() => {
     if (!sessionLoaded) return;
     (async () => {
@@ -169,56 +203,58 @@ export default function App() {
         )
         .order("created_at", { ascending: false });
 
-      if (!error) {
-        const ids = data?.map((p) => p.id) ?? [];
-        let liked: Record<string, boolean> = {};
-        if (userId && ids.length) {
-          const { data: myLikes } = await supabase
-            .from("likes")
-            .select("post_id")
-            .eq("user_id", userId)
-            .in("post_id", ids);
-          liked = Object.fromEntries((myLikes ?? []).map((l) => [l.post_id, true]));
-        }
-        setFeed(
-          (data ?? []).map((p: any) => ({
-            ...p,
-            likes_count: p.likes_count?.[0]?.count ?? 0,
-            comments_count: p.comments_count?.[0]?.count ?? 0,
-            liked_by_me: liked[p.id] ?? false,
-          }))
-        );
+      if (error) {
+        console.error(error);
+        return;
       }
+
+      const ids = (data ?? []).map((p) => p.id);
+      let liked: Record<string, boolean> = {};
+
+      if (userId && ids.length) {
+        const { data: myLikes } = await supabase
+          .from("likes")
+          .select("post_id")
+          .eq("user_id", userId)
+          .in("post_id", ids);
+        liked = Object.fromEntries((myLikes ?? []).map((l) => [l.post_id, true]));
+      }
+
+      setFeed(
+        (data ?? []).map((p: any) => ({
+          ...p,
+          likes_count: p.likes_count?.[0]?.count ?? 0,
+          comments_count: p.comments_count?.[0]?.count ?? 0,
+          liked_by_me: liked[p.id] ?? false,
+        }))
+      );
     })();
   }, [sessionLoaded, userId, view]);
 
-  // ---- Actions ----
+  /* ===== Auth actions ===== */
   async function signIn() {
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const redirectTo = window.location.origin;
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: window.location.origin,
-        skipBrowserRedirect: false,
-      },
+      options: { redirectTo },
     });
     if (error) alert(error.message);
-    if (data?.url) window.location.href = data.url; // Safari
   }
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) alert(error.message);
   }
 
+  /* ===== Upload post ===== */
   function openFilePicker() {
     fileInputRef.current?.click();
   }
-
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
     setLoading(true);
     try {
-      const ext = f.name.split(".").pop() || (isVideo(f) ? "mp4" : "jpg");
+      const ext = extFromFile(f);
       const path = `posts/${userId}/${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage
         .from("media")
@@ -227,7 +263,7 @@ export default function App() {
 
       const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
       const media_url = pub.publicUrl;
-      const media_type = isVideo(f) ? "video" : "image";
+      const media_type: "image" | "video" = isVideo(f) ? "video" : "image";
 
       const { error: insErr } = await supabase
         .from("posts")
@@ -236,6 +272,7 @@ export default function App() {
 
       setView("home");
     } catch (err: any) {
+      console.error(err);
       alert(err.message || "Upload failed.");
     } finally {
       setLoading(false);
@@ -243,6 +280,7 @@ export default function App() {
     }
   }
 
+  /* ===== Avatar ===== */
   function openAvatarPicker() {
     avatarInputRef.current?.click();
   }
@@ -251,7 +289,7 @@ export default function App() {
     if (!f || !userId) return;
     setLoading(true);
     try {
-      const ext = f.name.split(".").pop() || "jpg";
+      const ext = extFromFile(f);
       const path = `avatars/${userId}.${ext}`;
       const { error: upErr } = await supabase.storage
         .from("media")
@@ -271,6 +309,7 @@ export default function App() {
 
       setProfile((p) => (p ? { ...p, avatar_url } : p));
     } catch (err: any) {
+      console.error(err);
       alert(err.message || "Could not update avatar.");
     } finally {
       setLoading(false);
@@ -278,6 +317,7 @@ export default function App() {
     }
   }
 
+  /* ===== Likes ===== */
   async function toggleLike(post: Post) {
     if (!userId) return;
     if (post.liked_by_me) {
@@ -301,6 +341,7 @@ export default function App() {
     }
   }
 
+  /* ===== Comments ===== */
   async function openComments(post: Post) {
     setActivePost(post);
     setCommentsOpen(true);
@@ -317,7 +358,6 @@ export default function App() {
       }))
     );
   }
-
   async function submitComment() {
     if (!activePost || !userId || !newComment.trim()) return;
     const content = newComment.trim();
@@ -329,7 +369,7 @@ export default function App() {
       return;
     }
     setNewComment("");
-    openComments(activePost);
+    await openComments(activePost); // reload
     setFeed((arr) =>
       arr.map((p) =>
         p.id === activePost.id
@@ -339,6 +379,7 @@ export default function App() {
     );
   }
 
+  /* ===== Delete post ===== */
   async function deletePost(post: Post) {
     if (!userId || post.user_id !== userId) return;
     if (!confirm("Delete this post?")) return;
@@ -350,13 +391,13 @@ export default function App() {
     setFeed((arr) => arr.filter((p) => p.id !== post.id));
   }
 
+  /* ===== Edit profile ===== */
   function openEditProfile() {
     if (!profile) return;
     setEditFullName(profile.full_name ?? "");
     setEditUsername(profile.username ?? "");
     setEditOpen(true);
   }
-
   async function saveProfile() {
     if (!userId) return;
     const payload: Partial<Profile> = {
@@ -377,9 +418,9 @@ export default function App() {
     setEditOpen(false);
   }
 
-  // ---- Render ----
   const signedIn = !!userId;
 
+  /* ===== Avatar view ===== */
   const avatar = (
     <div className="relative h-20 w-20 shrink-0">
       {profile?.avatar_url ? (
@@ -439,7 +480,8 @@ export default function App() {
               </div>
               <div className="mt-2 flex gap-6 text-sm">
                 <div>
-                  <b>{feed.filter((p) => p.user_id === profile.id).length}</b> posts
+                  <b>{feed.filter((p) => p.user_id === profile.id).length}</b>{" "}
+                  posts
                 </div>
                 <div>
                   <b>{profile.followers_count ?? 0}</b> followers
@@ -472,7 +514,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* Hidden inputs */}
+      {/* Hidden input (post) */}
       <input
         ref={fileInputRef}
         type="file"
@@ -486,16 +528,23 @@ export default function App() {
         {(view === "home" || view === "profile") && (
           <>
             {!feed.length && (
-              <div className="text-center text-gray-500 py-20">No posts yet.</div>
+              <div className="text-center text-gray-500 py-20">
+                No posts yet.
+              </div>
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {feed
-                .filter((p) => (view === "profile" && userId ? p.user_id === userId : true))
+                .filter((p) =>
+                  view === "profile" && userId ? p.user_id === userId : true
+                )
                 .map((p) => (
                   <div key={p.id} className="relative">
                     <div className="aspect-square overflow-hidden rounded-xl border">
                       {p.media_type === "image" ? (
-                        <img src={p.media_url} className="h-full w-full object-cover" />
+                        <img
+                          src={p.media_url}
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         <video
                           src={p.media_url}
@@ -521,6 +570,7 @@ export default function App() {
                           💬 {p.comments_count ?? 0}
                         </button>
                       </div>
+
                       {userId === p.user_id && (
                         <button
                           onClick={() => deletePost(p)}
@@ -538,7 +588,9 @@ export default function App() {
         )}
 
         {view === "search" && (
-          <div className="text-center text-gray-500 py-20">Search (coming soon).</div>
+          <div className="text-center text-gray-500 py-20">
+            Search (coming soon).
+          </div>
         )}
 
         {view === "post" && (
@@ -554,7 +606,11 @@ export default function App() {
       </div>
 
       {/* Edit profile modal */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit profile">
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit profile"
+      >
         <div className="space-y-3">
           <label className="block">
             <div className="text-sm text-gray-600">Full name</div>
@@ -591,17 +647,21 @@ export default function App() {
               <div key={c.id} className="flex items-start gap-2">
                 <img
                   src={c.user.avatar_url || ""}
-                  onError={(e) => ((e.currentTarget.style.display = "none"))}
+                  onError={(e) => (e.currentTarget.style.display = "none")}
                   className="h-7 w-7 rounded-full object-cover border"
                 />
                 <div>
-                  <div className="text-sm font-medium">@{c.user.username}</div>
+                  <div className="text-sm font-medium">
+                    @{c.user.username}
+                  </div>
                   <div className="text-sm">{c.content}</div>
                 </div>
               </div>
             ))}
             {!comments.length && (
-              <div className="text-sm text-gray-500">Be the first to comment</div>
+              <div className="text-sm text-gray-500">
+                Be the first to comment
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2">
