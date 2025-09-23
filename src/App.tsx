@@ -2,24 +2,32 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-/* ========= Supabase client ========= */
+// ---- Supabase client (browser) ----
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseAnon = (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string;
-
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
-  auth: {
-    persistSession: true,
-    flowType: "pkce",
-    detectSessionInUrl: true,
-  },
+  auth: { persistSession: true, flowType: "pkce", detectSessionInUrl: true },
 });
 
-/* ========= Types ========= */
+// ---- Public URL helper (Storage) ----
+const SUPABASE_URL = supabaseUrl;
+/** Converte caminho salvo no DB -> URL pública do bucket media */
+function toPublicUrl(pathOrUrl?: string | null) {
+  if (!pathOrUrl) return "";
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const normalized = pathOrUrl.replace(/^public\//, "");
+  const withBucket = normalized.startsWith("media/")
+    ? normalized
+    : `media/${normalized}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/${withBucket}`;
+}
+
+// ---- Types ----
 type Profile = {
   id: string;
   full_name: string | null;
   username: string | null;
-  avatar_url: string | null;
+  avatar_url: string | null; // armazena apenas o caminho (ex: avatars/uid/123.jpg)
   followers_count?: number | null;
   following_count?: number | null;
   posts_count?: number | null;
@@ -28,7 +36,7 @@ type Profile = {
 type Post = {
   id: string;
   user_id: string;
-  media_url: string;
+  media_url: string; // armazena apenas o caminho (ex: posts/uid/123.jpg)
   media_type: "image" | "video";
   caption: string | null;
   created_at: string;
@@ -38,7 +46,12 @@ type Post = {
   liked_by_me?: boolean;
 };
 
-/* ========= Small UI atoms ========= */
+// ---- Helpers ----
+const isVideo = (file: File) =>
+  file.type.startsWith("video/") ||
+  /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
+
+// ---- UI atoms ----
 function Btn(props: JSX.IntrinsicElements["button"]) {
   const { className = "", ...rest } = props;
   return (
@@ -52,8 +65,8 @@ function Btn(props: JSX.IntrinsicElements["button"]) {
 function Modal({
   open,
   onClose,
-  title,
   children,
+  title,
 }: {
   open: boolean;
   onClose: () => void;
@@ -82,31 +95,18 @@ function Modal({
   );
 }
 
-/* ========= Helpers ========= */
-const isVideo = (file: File) =>
-  file.type.startsWith("video/") ||
-  /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
-
-function extFromFile(f: File) {
-  const ext = f.name.split(".").pop();
-  if (ext) return ext.toLowerCase();
-  return isVideo(f) ? "mp4" : "jpg";
-}
-
-/* ========= App ========= */
+// ---- Main App ----
 export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-
   const [view, setView] = useState<"home" | "search" | "post" | "profile">(
     "home"
   );
-
   const [profile, setProfile] = useState<Profile | null>(null);
   const [feed, setFeed] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // comments
+  // comment modal
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [activePost, setActivePost] = useState<Post | null>(null);
   const [comments, setComments] = useState<
@@ -114,80 +114,54 @@ export default function App() {
   >([]);
   const [newComment, setNewComment] = useState("");
 
-  // edit profile
+  // edit profile modal
   const [editOpen, setEditOpen] = useState(false);
   const [editFullName, setEditFullName] = useState("");
   const [editUsername, setEditUsername] = useState("");
 
-  // file inputs
+  // upload refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  /* ===== AUTH bootstrap + profile upsert fallback ===== */
+  // ---- Auth bootstrap ----
   useEffect(() => {
-    // se o Supabase mandou erro na URL, mostra
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error_description");
-    if (err) {
-      // limpa a query string para não repetir
-      window.history.replaceState({}, "", window.location.origin);
-      alert(err);
-    }
-
     supabase.auth.getSession().then(({ data }) => {
-      const uid = data.session?.user?.id ?? null;
-      setUserId(uid);
+      setUserId(data.session?.user.id ?? null);
       setSessionLoaded(true);
-      if (uid) ensureProfileExists(uid);
     });
-
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      const uid = s?.user?.id ?? null;
-      setUserId(uid);
+      setUserId(s?.user?.id ?? null);
       setSessionLoaded(true);
-      if (uid) ensureProfileExists(uid);
     });
-
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  /** cria/garante uma linha em profiles sem depender de trigger */
-  async function ensureProfileExists(uid: string) {
-    try {
-      // tenta ler
-      const { data: got } = await supabase
-        .from("profiles")
-        .select("id, full_name, username, avatar_url")
-        .eq("id", uid)
-        .maybeSingle();
-      if (got) {
-        setProfile(got);
-        return;
-      }
-      // cria (upsert só com id, sem conflito)
-      await supabase.from("profiles").upsert({ id: uid }, { onConflict: "id" });
-
-      // lê novamente
+  // ---- Ensure profile row exists ----
+  useEffect(() => {
+    if (!userId) {
+      setProfile(null);
+      return;
+    }
+    (async () => {
+      // cria se não existir (id igual ao auth.user.id)
+      await supabase.from("profiles").upsert({ id: userId }, { onConflict: "id" });
       const { data } = await supabase
         .from("profiles")
         .select("id, full_name, username, avatar_url")
-        .eq("id", uid)
+        .eq("id", userId)
         .maybeSingle();
-
       setProfile(
         data ?? {
-          id: uid,
+          id: userId,
           full_name: null,
           username: null,
           avatar_url: null,
         }
       );
-    } catch (e) {
-      console.error(e);
-    }
-  }
+    })();
+  }, [userId]);
 
-  /* ===== FEED ===== */
+  // ---- Load feed ----
   useEffect(() => {
     if (!sessionLoaded) return;
     (async () => {
@@ -203,37 +177,33 @@ export default function App() {
         )
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error(error);
-        return;
+      if (!error) {
+        // mark like by me
+        const ids = data?.map((p) => p.id) ?? [];
+        let liked: Record<string, boolean> = {};
+        if (userId && ids.length) {
+          const { data: myLikes } = await supabase
+            .from("likes")
+            .select("post_id")
+            .eq("user_id", userId)
+            .in("post_id", ids);
+          liked = Object.fromEntries((myLikes ?? []).map((l) => [l.post_id, true]));
+        }
+        setFeed(
+          (data ?? []).map((p: any) => ({
+            ...p,
+            likes_count: p.likes_count?.[0]?.count ?? 0,
+            comments_count: p.comments_count?.[0]?.count ?? 0,
+            liked_by_me: liked[p.id] ?? false,
+          }))
+        );
       }
-
-      const ids = (data ?? []).map((p) => p.id);
-      let liked: Record<string, boolean> = {};
-
-      if (userId && ids.length) {
-        const { data: myLikes } = await supabase
-          .from("likes")
-          .select("post_id")
-          .eq("user_id", userId)
-          .in("post_id", ids);
-        liked = Object.fromEntries((myLikes ?? []).map((l) => [l.post_id, true]));
-      }
-
-      setFeed(
-        (data ?? []).map((p: any) => ({
-          ...p,
-          likes_count: p.likes_count?.[0]?.count ?? 0,
-          comments_count: p.comments_count?.[0]?.count ?? 0,
-          liked_by_me: liked[p.id] ?? false,
-        }))
-      );
     })();
   }, [sessionLoaded, userId, view]);
 
-  /* ===== Auth actions ===== */
+  // ---- Actions ----
   async function signIn() {
-    const redirectTo = window.location.origin;
+    const redirectTo = window.location.origin; // garante retorno correto
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },
@@ -245,25 +215,27 @@ export default function App() {
     if (error) alert(error.message);
   }
 
-  /* ===== Upload post ===== */
   function openFilePicker() {
     fileInputRef.current?.click();
   }
+
+  // === UPLOAD DE POST (salva só caminho) ===
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
     setLoading(true);
     try {
-      const ext = extFromFile(f);
-      const path = `posts/${userId}/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
+      const ext = f.name.split(".").pop() || (isVideo(f) ? "mp4" : "jpg");
+      const filePath = `posts/${userId}/${Date.now()}.${ext}`;
+
+      const { error: upErr } = await supabase
+        .storage
         .from("media")
-        .upload(path, f, { upsert: true, contentType: f.type || undefined });
+        .upload(filePath, f, { upsert: true, contentType: f.type || undefined });
       if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-      const media_url = pub.publicUrl;
-      const media_type: "image" | "video" = isVideo(f) ? "video" : "image";
+      const media_url = filePath; // apenas caminho
+      const media_type = isVideo(f) ? "video" : "image";
 
       const { error: insErr } = await supabase
         .from("posts")
@@ -272,7 +244,6 @@ export default function App() {
 
       setView("home");
     } catch (err: any) {
-      console.error(err);
       alert(err.message || "Upload failed.");
     } finally {
       setLoading(false);
@@ -280,24 +251,26 @@ export default function App() {
     }
   }
 
-  /* ===== Avatar ===== */
   function openAvatarPicker() {
     avatarInputRef.current?.click();
   }
+
+  // === UPLOAD DE AVATAR (salva só caminho) ===
   async function handleAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
     setLoading(true);
     try {
-      const ext = extFromFile(f);
-      const path = `avatars/${userId}.${ext}`;
-      const { error: upErr } = await supabase.storage
+      const ext = f.name.split(".").pop() || "jpg";
+      const filePath = `avatars/${userId}/${Date.now()}.${ext}`;
+
+      const { error: upErr } = await supabase
+        .storage
         .from("media")
-        .upload(path, f, { upsert: true, contentType: f.type || undefined });
+        .upload(filePath, f, { upsert: true, contentType: f.type || undefined });
       if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-      const avatar_url = pub.publicUrl;
+      const avatar_url = filePath; // apenas caminho
 
       const { error: updErr } = await supabase
         .from("profiles")
@@ -309,7 +282,6 @@ export default function App() {
 
       setProfile((p) => (p ? { ...p, avatar_url } : p));
     } catch (err: any) {
-      console.error(err);
       alert(err.message || "Could not update avatar.");
     } finally {
       setLoading(false);
@@ -317,7 +289,6 @@ export default function App() {
     }
   }
 
-  /* ===== Likes ===== */
   async function toggleLike(post: Post) {
     if (!userId) return;
     if (post.liked_by_me) {
@@ -341,7 +312,6 @@ export default function App() {
     }
   }
 
-  /* ===== Comments ===== */
   async function openComments(post: Post) {
     setActivePost(post);
     setCommentsOpen(true);
@@ -358,6 +328,7 @@ export default function App() {
       }))
     );
   }
+
   async function submitComment() {
     if (!activePost || !userId || !newComment.trim()) return;
     const content = newComment.trim();
@@ -369,7 +340,7 @@ export default function App() {
       return;
     }
     setNewComment("");
-    await openComments(activePost); // reload
+    openComments(activePost); // reload
     setFeed((arr) =>
       arr.map((p) =>
         p.id === activePost.id
@@ -379,7 +350,6 @@ export default function App() {
     );
   }
 
-  /* ===== Delete post ===== */
   async function deletePost(post: Post) {
     if (!userId || post.user_id !== userId) return;
     if (!confirm("Delete this post?")) return;
@@ -391,13 +361,13 @@ export default function App() {
     setFeed((arr) => arr.filter((p) => p.id !== post.id));
   }
 
-  /* ===== Edit profile ===== */
   function openEditProfile() {
     if (!profile) return;
     setEditFullName(profile.full_name ?? "");
     setEditUsername(profile.username ?? "");
     setEditOpen(true);
   }
+
   async function saveProfile() {
     if (!userId) return;
     const payload: Partial<Profile> = {
@@ -418,20 +388,21 @@ export default function App() {
     setEditOpen(false);
   }
 
+  // ---- Renderers ----
   const signedIn = !!userId;
 
-  /* ===== Avatar view ===== */
   const avatar = (
     <div className="relative h-20 w-20 shrink-0">
       {profile?.avatar_url ? (
         <img
-          src={profile.avatar_url}
+          src={toPublicUrl(profile.avatar_url)}
           className="h-20 w-20 rounded-full object-cover border"
           alt="avatar"
+          onError={(e) => ((e.currentTarget.style.display = "none"))}
         />
       ) : (
         <div className="h-20 w-20 rounded-full bg-gray-200 grid place-items-center text-gray-500 border">
-          IMG
+          avatar
         </div>
       )}
       <input
@@ -466,7 +437,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Profile header */}
+      {/* Profile header (always visible if logged) */}
       {signedIn && profile && (
         <div className="px-4 py-4 border-b">
           <div className="flex items-center gap-4">
@@ -479,16 +450,9 @@ export default function App() {
                 @{profile.username || "username"}
               </div>
               <div className="mt-2 flex gap-6 text-sm">
-                <div>
-                  <b>{feed.filter((p) => p.user_id === profile.id).length}</b>{" "}
-                  posts
-                </div>
-                <div>
-                  <b>{profile.followers_count ?? 0}</b> followers
-                </div>
-                <div>
-                  <b>{profile.following_count ?? 0}</b> following
-                </div>
+                <div><b>{feed.filter(p=>p.user_id===profile.id).length}</b> posts</div>
+                <div><b>{profile.followers_count ?? 0}</b> followers</div>
+                <div><b>{profile.following_count ?? 0}</b> following</div>
               </div>
             </div>
           </div>
@@ -514,7 +478,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* Hidden input (post) */}
+      {/* Hidden inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -534,20 +498,15 @@ export default function App() {
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {feed
-                .filter((p) =>
-                  view === "profile" && userId ? p.user_id === userId : true
-                )
+                .filter((p) => (view === "profile" && userId ? p.user_id === userId : true))
                 .map((p) => (
                   <div key={p.id} className="relative">
                     <div className="aspect-square overflow-hidden rounded-xl border">
                       {p.media_type === "image" ? (
-                        <img
-                          src={p.media_url}
-                          className="h-full w-full object-cover"
-                        />
+                        <img src={toPublicUrl(p.media_url)} className="h-full w-full object-cover" />
                       ) : (
                         <video
-                          src={p.media_url}
+                          src={toPublicUrl(p.media_url)}
                           className="h-full w-full object-cover"
                           playsInline
                           muted
@@ -570,7 +529,6 @@ export default function App() {
                           💬 {p.comments_count ?? 0}
                         </button>
                       </div>
-
                       {userId === p.user_id && (
                         <button
                           onClick={() => deletePost(p)}
@@ -595,9 +553,7 @@ export default function App() {
 
         {view === "post" && (
           <div className="text-center py-20">
-            <div className="mb-3 text-gray-500">
-              After selection, the post appears in Home.
-            </div>
+            <div className="mb-3 text-gray-500">After selection, the post appears in Home.</div>
             <Btn onClick={openFilePicker} disabled={loading}>
               {loading ? "Uploading..." : "Select photo/video"}
             </Btn>
@@ -606,11 +562,7 @@ export default function App() {
       </div>
 
       {/* Edit profile modal */}
-      <Modal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        title="Edit profile"
-      >
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit profile">
         <div className="space-y-3">
           <label className="block">
             <div className="text-sm text-gray-600">Full name</div>
@@ -646,22 +598,18 @@ export default function App() {
             {comments.map((c) => (
               <div key={c.id} className="flex items-start gap-2">
                 <img
-                  src={c.user.avatar_url || ""}
-                  onError={(e) => (e.currentTarget.style.display = "none")}
+                  src={toPublicUrl(c.user.avatar_url || "")}
+                  onError={(e) => ((e.currentTarget.style.display = "none"))}
                   className="h-7 w-7 rounded-full object-cover border"
                 />
                 <div>
-                  <div className="text-sm font-medium">
-                    @{c.user.username}
-                  </div>
+                  <div className="text-sm font-medium">@{c.user.username}</div>
                   <div className="text-sm">{c.content}</div>
                 </div>
               </div>
             ))}
             {!comments.length && (
-              <div className="text-sm text-gray-500">
-                Be the first to comment
-              </div>
+              <div className="text-sm text-gray-500">Be the first to comment</div>
             )}
           </div>
           <div className="flex items-center gap-2">
