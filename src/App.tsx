@@ -491,7 +491,7 @@ export default function App() {
 
       {/* Profile header */}
       {signedIn && profile && (
-        <div className="px-4 py-4 border-b">
+        <div className="px-4 pt-4 pb-2 border-b">
           <div className="flex items-center gap-4">
             {avatar}
             <div className="min-w-0">
@@ -520,22 +520,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Tabs (top) */}
-      <div className="flex items-center justify-around border-b text-sm">
-        {(["home", "search", "post", "profile"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => {
-              setView(t);
-              if (t === "post") openFilePicker();
-            }}
-            className={`py-3 w-full ${view === t ? "font-semibold" : ""}`}
-          >
-            {t[0].toUpperCase() + t.slice(1)}
-          </button>
-        ))}
-      </div>
-
       {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
@@ -545,7 +529,7 @@ export default function App() {
         onChange={handleUpload}
       />
 
-      {/* Views */}
+      {/* Content */}
       <div className="p-4">
         {(view === "home" || view === "profile") && (
           <>
