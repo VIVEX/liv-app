@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase"; // <<< ajuste se necessário
+import { supabase } from "./lib/supabaseClient"; // <<< ajuste se necessário
 
 // ---------- Tipos ----------
 type Profile = {
