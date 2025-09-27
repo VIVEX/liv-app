@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-/* ───────────────── Supabase client ───────────────── */
+/* ───────────────── Supabase ───────────────── */
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseAnon = (import.meta as any).env.VITE_SUPABASE_ANON_KEY as string;
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
@@ -53,10 +53,12 @@ function Modal({
   onClose,
   children,
   title,
+  maxW = "max-w-lg",
 }: {
   open: boolean;
   onClose: () => void;
   title?: string;
+  maxW?: string;
   children: React.ReactNode;
 }) {
   if (!open) return null;
@@ -66,7 +68,7 @@ function Modal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
+        className={`w-full ${maxW} rounded-xl bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
@@ -81,62 +83,30 @@ function Modal({
   );
 }
 
-/* ───────────────── SVG icons ───────────────── */
+/* ───────────────── Icons ───────────────── */
 const IconHeart = ({ filled = false }: { filled?: boolean }) => (
-  <svg
-    viewBox="0 0 24 24"
-    className="h-6 w-6"
-    fill={filled ? "currentColor" : "none"}
-    stroke="currentColor"
-    strokeWidth={1.8}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.86 0-3.47 1.07-4.312 2.625C11.158 4.82 9.548 3.75 7.688 3.75 5.099 3.75 3 5.765 3 8.25c0 7.125 9 12 9 12s9-4.875 9-12Z"
-    />
+  <svg viewBox="0 0 24 24" className="h-6 w-6"
+    fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round"
+      d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.86 0-3.47 1.07-4.312 2.625C11.158 4.82 9.548 3.75 7.688 3.75 5.099 3.75 3 5.765 3 8.25c0 7.125 9 12 9 12s9-4.875 9-12Z" />
   </svg>
 );
 const IconComment = () => (
-  <svg
-    viewBox="0 0 24 24"
-    className="h-6 w-6"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.8}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M7.5 8.25h9m-9 3h6.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-    />
+  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round"
+      d="M7.5 8.25h9m-9 3h6.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
   </svg>
 );
 const IconHome = ({ active = false }: { active?: boolean }) => (
-  <svg
-    viewBox="0 0 24 24"
-    className="h-7 w-7"
-    fill={active ? "currentColor" : "none"}
-    stroke="currentColor"
-    strokeWidth={1.6}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="m3 10.5 9-7.5 9 7.5V21a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 21v-10.5Z"
-    />
+  <svg viewBox="0 0 24 24" className="h-7 w-7"
+    fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.6}>
+    <path strokeLinecap="round" strokeLinejoin="round"
+      d="m3 10.5 9-7.5 9 7.5V21a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 21v-10.5Z" />
   </svg>
 );
 const IconSearch = ({ active = false }: { active?: boolean }) => (
-  <svg
-    viewBox="0 0 24 24"
-    className="h-7 w-7"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={active ? 2.2 : 1.6}
-  >
-    <circle cx="11" cy="11" r="7" />
-    <path strokeLinecap="round" d="M20 20l-3-3" />
+  <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.6}>
+    <circle cx="11" cy="11" r="7" /><path strokeLinecap="round" d="M20 20l-3-3" />
   </svg>
 );
 const IconPlus = () => (
@@ -145,19 +115,12 @@ const IconPlus = () => (
   </svg>
 );
 const IconUser = ({ active = false }: { active?: boolean }) => (
-  <svg
-    viewBox="0 0 24 24"
-    className="h-7 w-7"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={active ? 2 : 1.6}
-  >
-    <path d="M4 19a8 8 0 0 1 16 0" />
-    <circle cx="12" cy="8" r="4" />
+  <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6}>
+    <path d="M4 19a8 8 0 0 1 16 0" /><circle cx="12" cy="8" r="4" />
   </svg>
 );
 
-/* ───────────────── Main App ───────────────── */
+/* ───────────────── App ───────────────── */
 export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
@@ -179,11 +142,17 @@ export default function App() {
   const [editFullName, setEditFullName] = useState("");
   const [editUsername, setEditUsername] = useState("");
 
+  // post viewer
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerPost, setViewerPost] = useState<Post | null>(null);
+  const [heartBurst, setHeartBurst] = useState(false);
+  const lastTapRef = useRef<number>(0);
+
   // refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  /* ── Auth bootstrap ── */
+  /* ── Auth ── */
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
@@ -196,7 +165,7 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  /* ── Ensure profile exists ── */
+  /* ── Ensure profile ── */
   useEffect(() => {
     if (!userId) {
       setProfile(null);
@@ -209,9 +178,7 @@ export default function App() {
         .select("id, full_name, username, avatar_url")
         .eq("id", userId)
         .maybeSingle();
-      setProfile(
-        data ?? { id: userId, full_name: null, username: null, avatar_url: null }
-      );
+      setProfile(data ?? { id: userId, full_name: null, username: null, avatar_url: null });
     })();
   }, [userId]);
 
@@ -221,14 +188,12 @@ export default function App() {
     (async () => {
       const { data, error } = await supabase
         .from("posts")
-        .select(
-          `
-            id, user_id, media_url, media_type, caption, created_at,
-            author:profiles ( id, full_name, username, avatar_url ),
-            likes_count:likes(count),
-            comments_count:comments(count)
-          `
-        )
+        .select(`
+          id, user_id, media_url, media_type, caption, created_at,
+          author:profiles ( id, full_name, username, avatar_url ),
+          likes_count:likes(count),
+          comments_count:comments(count)
+        `)
         .order("created_at", { ascending: false });
 
       if (error) return;
@@ -255,7 +220,7 @@ export default function App() {
     })();
   }, [sessionLoaded, userId, view]);
 
-  /* ── Actions ── */
+  /* ── Auth actions ── */
   async function signIn() {
     const redirectTo = window.location.origin;
     const { error } = await supabase.auth.signInWithOAuth({
@@ -269,10 +234,10 @@ export default function App() {
     if (error) alert(error.message);
   }
 
+  /* ── Uploads ── */
   function openFilePicker() {
     fileInputRef.current?.click();
   }
-
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f || !userId) return;
@@ -281,8 +246,7 @@ export default function App() {
       const ext = f.name.split(".").pop() || (isVideo(f) ? "mp4" : "jpg");
       const path = `posts/${userId}/${Date.now()}.${ext}`;
       const { error: upErr } = await supabase
-        .storage
-        .from("media")
+        .storage.from("media")
         .upload(path, f, { upsert: true, contentType: f.type || undefined });
       if (upErr) throw upErr;
 
@@ -303,7 +267,6 @@ export default function App() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
-
   function openAvatarPicker() {
     avatarInputRef.current?.click();
   }
@@ -315,8 +278,7 @@ export default function App() {
       const ext = f.name.split(".").pop() || "jpg";
       const path = `avatars/${userId}.${ext}`;
       const { error: upErr } = await supabase
-        .storage
-        .from("media")
+        .storage.from("media")
         .upload(path, f, { upsert: true, contentType: f.type || undefined });
       if (upErr) throw upErr;
 
@@ -340,26 +302,27 @@ export default function App() {
     }
   }
 
+  /* ── Likes & comments ── */
   async function toggleLike(post: Post) {
     if (!userId) return;
     if (post.liked_by_me) {
       await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
       setFeed((arr) =>
         arr.map((p) =>
-          p.id === post.id
-            ? { ...p, liked_by_me: false, likes_count: (p.likes_count ?? 1) - 1 }
-            : p
+          p.id === post.id ? { ...p, liked_by_me: false, likes_count: (p.likes_count ?? 1) - 1 } : p
         )
       );
+      if (viewerPost?.id === post.id)
+        setViewerPost({ ...post, liked_by_me: false, likes_count: (post.likes_count ?? 1) - 1 });
     } else {
       await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
       setFeed((arr) =>
         arr.map((p) =>
-          p.id === post.id
-            ? { ...p, liked_by_me: true, likes_count: (p.likes_count ?? 0) + 1 }
-            : p
+          p.id === post.id ? { ...p, liked_by_me: true, likes_count: (p.likes_count ?? 0) + 1 } : p
         )
       );
+      if (viewerPost?.id === post.id)
+        setViewerPost({ ...post, liked_by_me: true, likes_count: (post.likes_count ?? 0) + 1 });
     }
   }
 
@@ -371,34 +334,33 @@ export default function App() {
       .select("id, content, user:profiles(username, avatar_url)")
       .eq("post_id", post.id)
       .order("created_at", { ascending: true });
-    setComments(
-      (data ?? []).map((c: any) => ({
-        id: c.id,
-        content: c.content,
-        user: c.user,
-      }))
-    );
+    setComments((data ?? []).map((c: any) => ({ id: c.id, content: c.content, user: c.user })));
   }
 
   async function submitComment() {
-    if (!activePost || !userId || !newComment.trim()) return;
+    const post = viewerPost ?? activePost;
+    if (!post || !userId || !newComment.trim()) return;
     const content = newComment.trim();
     const { error } = await supabase
       .from("comments")
-      .insert({ post_id: activePost.id, user_id: userId, content });
+      .insert({ post_id: post.id, user_id: userId, content });
     if (error) {
       alert("Could not comment.");
       return;
     }
     setNewComment("");
-    openComments(activePost); // reload
-    setFeed((arr) =>
-      arr.map((p) =>
-        p.id === activePost.id
-          ? { ...p, comments_count: (p.comments_count ?? 0) + 1 }
-          : p
-      )
-    );
+    // reload comments for viewer or legacy modal
+    if (viewerOpen && viewerPost) {
+      loadViewerComments(viewerPost.id);
+      setViewerPost({ ...viewerPost, comments_count: (viewerPost.comments_count ?? 0) + 1 });
+    } else if (activePost) {
+      openComments(activePost);
+      setFeed((arr) =>
+        arr.map((p) =>
+          p.id === activePost.id ? { ...p, comments_count: (p.comments_count ?? 0) + 1 } : p
+        )
+      );
+    }
   }
 
   async function deletePost(post: Post) {
@@ -410,6 +372,7 @@ export default function App() {
       return;
     }
     setFeed((arr) => arr.filter((p) => p.id !== post.id));
+    if (viewerPost?.id === post.id) setViewerOpen(false);
   }
 
   function openEditProfile() {
@@ -418,7 +381,6 @@ export default function App() {
     setEditUsername(profile.username ?? "");
     setEditOpen(true);
   }
-
   async function saveProfile() {
     if (!userId) return;
     const payload: Partial<Profile> = {
@@ -439,6 +401,36 @@ export default function App() {
     setEditOpen(false);
   }
 
+  /* ── Post viewer helpers ── */
+  const [viewerComments, setViewerComments] = useState<
+    { id: string; content: string; user: { username: string | null; avatar_url: string | null } }[]
+  >([]);
+
+  async function loadViewerComments(postId: string) {
+    const { data } = await supabase
+      .from("comments")
+      .select("id, content, user:profiles(username, avatar_url)")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true });
+    setViewerComments((data ?? []).map((c: any) => ({ id: c.id, content: c.content, user: c.user })));
+  }
+
+  function openViewer(p: Post) {
+    setViewerPost(p);
+    setViewerOpen(true);
+    setNewComment("");
+    loadViewerComments(p.id);
+  }
+  function onMediaTap() {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      setHeartBurst(true);
+      setTimeout(() => setHeartBurst(false), 700);
+      if (viewerPost) toggleLike(viewerPost);
+    }
+    lastTapRef.current = now;
+  }
+
   /* ── Derived ── */
   const signedIn = !!userId;
 
@@ -446,23 +438,13 @@ export default function App() {
   const avatar = (
     <div className="relative h-20 w-20 shrink-0">
       {profile?.avatar_url ? (
-        <img
-          src={profile.avatar_url}
-          className="h-20 w-20 rounded-full object-cover border"
-          alt="avatar"
-        />
+        <img src={profile.avatar_url} className="h-20 w-20 rounded-full object-cover border" alt="avatar" />
       ) : (
         <div className="h-20 w-20 rounded-full bg-gray-200 grid place-items-center text-gray-500 border">
           avatar
         </div>
       )}
-      <input
-        ref={avatarInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleAvatar}
-      />
+      <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
       <button
         onClick={openAvatarPicker}
         className="absolute bottom-0 right-0 text-xs rounded-md bg-black/70 text-white px-2 py-0.5"
@@ -480,11 +462,7 @@ export default function App() {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="font-bold tracking-wide">LIVET</div>
           <div className="flex items-center gap-2">
-            {!signedIn ? (
-              <Btn onClick={signIn}>Sign in with Google</Btn>
-            ) : (
-              <Btn onClick={signOut}>Logout</Btn>
-            )}
+            {!signedIn ? <Btn onClick={signIn}>Sign in with Google</Btn> : <Btn onClick={signOut}>Logout</Btn>}
           </div>
         </div>
       </div>
@@ -495,12 +473,8 @@ export default function App() {
           <div className="flex items-center gap-4">
             {avatar}
             <div className="min-w-0">
-              <div className="text-lg font-semibold truncate">
-                {profile.full_name || "Your name"}
-              </div>
-              <div className="text-gray-500 truncate">
-                @{profile.username || "username"}
-              </div>
+              <div className="text-lg font-semibold truncate">{profile.full_name || "Your name"}</div>
+              <div className="text-gray-500 truncate">@{profile.username || "username"}</div>
               <div className="mt-2 flex gap-6 text-sm">
                 <div>
                   <b>{feed.filter((p) => p.user_id === profile.id).length}</b> posts
@@ -520,72 +494,53 @@ export default function App() {
         </div>
       )}
 
-      {/* Hidden file inputs */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*,video/*"
-        className="hidden"
-        onChange={handleUpload}
-      />
+      {/* Hidden inputs */}
+      <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleUpload} />
 
       {/* Content */}
       <div className="p-4">
         {(view === "home" || view === "profile") && (
           <>
-            {!feed.length && (
-              <div className="text-center text-gray-500 py-20">No posts yet.</div>
-            )}
-
+            {!feed.length && <div className="text-center text-gray-500 py-20">No posts yet.</div>}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {feed
                 .filter((p) => (view === "profile" && userId ? p.user_id === userId : true))
                 .map((p) => (
                   <div key={p.id} className="relative">
-                    <div className="aspect-square overflow-hidden rounded-xl border">
+                    <button
+                      className="aspect-square overflow-hidden rounded-xl border w-full"
+                      onClick={() => openViewer(p)}
+                      title="Open"
+                    >
                       {p.media_type === "image" ? (
                         <img src={p.media_url} className="h-full w-full object-cover" />
                       ) : (
                         <video
                           src={p.media_url}
                           className="h-full w-full object-cover"
-                          playsInline
-                          muted
-                          preload="metadata"
-                          controls
+                          playsInline muted preload="metadata"
                         />
                       )}
-                    </div>
+                    </button>
 
                     {/* Post actions */}
                     <div className="mt-2 flex items-center justify-between text-sm">
                       <div className="flex items-center gap-4">
                         <button
                           onClick={() => toggleLike(p)}
-                          className={`flex items-center gap-1 ${
-                            p.liked_by_me ? "text-red-600" : "text-gray-800"
-                          }`}
+                          className={`flex items-center gap-1 ${p.liked_by_me ? "text-red-600" : "text-gray-800"}`}
                           title="Like"
                         >
                           <IconHeart filled={!!p.liked_by_me} />
                           <span>{p.likes_count ?? 0}</span>
                         </button>
-                        <button
-                          onClick={() => openComments(p)}
-                          className="flex items-center gap-1"
-                          title="Comments"
-                        >
+                        <button onClick={() => openViewer(p)} className="flex items-center gap-1" title="Comments">
                           <IconComment />
                           <span>{p.comments_count ?? 0}</span>
                         </button>
                       </div>
-
                       {userId === p.user_id && (
-                        <button
-                          onClick={() => deletePost(p)}
-                          className="text-red-600"
-                          title="Delete post"
-                        >
+                        <button onClick={() => deletePost(p)} className="text-red-600" title="Delete post">
                           Delete
                         </button>
                       )}
@@ -596,15 +551,11 @@ export default function App() {
           </>
         )}
 
-        {view === "search" && (
-          <div className="text-center text-gray-500 py-20">Search (coming soon).</div>
-        )}
+        {view === "search" && <div className="text-center text-gray-500 py-20">Search (coming soon).</div>}
 
         {view === "post" && (
           <div className="text-center py-20">
-            <div className="mb-3 text-gray-500">
-              After selection, the post appears in Home.
-            </div>
+            <div className="mb-3 text-gray-500">After selection, the post appears in Home.</div>
             <Btn onClick={openFilePicker} disabled={loading}>
               {loading ? "Uploading..." : "Select photo/video"}
             </Btn>
@@ -612,16 +563,11 @@ export default function App() {
         )}
       </div>
 
-      {/* Bottom nav (Instagram-style) */}
+      {/* Bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 border-t bg-white/95 backdrop-blur z-40">
         <div className="mx-auto max-w-3xl">
           <div className="grid grid-cols-4 py-2">
-            <button
-              className="grid place-items-center"
-              onClick={() => setView("home")}
-              aria-label="Home"
-              title="Home"
-            >
+            <button className="grid place-items-center" onClick={() => setView("home")} aria-label="Home" title="Home">
               <IconHome active={view === "home"} />
             </button>
             <button
@@ -681,12 +627,8 @@ export default function App() {
         </div>
       </Modal>
 
-      {/* Comments modal */}
-      <Modal
-        open={commentsOpen}
-        onClose={() => setCommentsOpen(false)}
-        title="Comments"
-      >
+      {/* Old comments modal (ainda disponível se quiser) */}
+      <Modal open={commentsOpen} onClose={() => setCommentsOpen(false)} title="Comments">
         <div className="space-y-3">
           <div className="max-h-64 overflow-auto space-y-2">
             {comments.map((c) => (
@@ -702,9 +644,7 @@ export default function App() {
                 </div>
               </div>
             ))}
-            {!comments.length && (
-              <div className="text-sm text-gray-500">Be the first to comment</div>
-            )}
+            {!comments.length && <div className="text-sm text-gray-500">Be the first to comment</div>}
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -716,6 +656,107 @@ export default function App() {
             <Btn onClick={submitComment}>Send</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* Post viewer modal (novo) */}
+      <Modal open={viewerOpen} onClose={() => setViewerOpen(false)} title="" maxW="max-w-3xl">
+        {viewerPost && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* mídia + double-tap */}
+            <div className="relative">
+              <div
+                className="aspect-square overflow-hidden rounded-xl border bg-black/5"
+                onClick={onMediaTap}
+                onDoubleClick={onMediaTap}
+              >
+                {viewerPost.media_type === "image" ? (
+                  <img src={viewerPost.media_url} className="h-full w-full object-cover" />
+                ) : (
+                  <video
+                    src={viewerPost.media_url}
+                    className="h-full w-full object-cover"
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                )}
+              </div>
+
+              {/* coração grande */}
+              {heartBurst && (
+                <div className="pointer-events-none absolute inset-0 grid place-items-center">
+                  <div className="text-red-600/90 animate-ping">
+                    <svg viewBox="0 0 24 24" className="h-24 w-24" fill="currentColor">
+                      <path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.86 0-3.47 1.07-4.312 2.625C11.158 4.82 9.548 3.75 7.688 3.75 5.099 3.75 3 5.765 3 8.25c0 7.125 9 12 9 12s9-4.875 9-12Z" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* infos / ações */}
+            <div className="flex flex-col">
+              <div className="flex items-center gap-3">
+                <img
+                  src={viewerPost.author?.avatar_url || ""}
+                  onError={(e) => ((e.currentTarget.style.display = "none"))}
+                  className="h-9 w-9 rounded-full object-cover border"
+                />
+                <div className="font-medium">@{viewerPost.author?.username || "user"}</div>
+              </div>
+
+              <div className="mt-3 flex items-center gap-5">
+                <button
+                  onClick={() => toggleLike(viewerPost)}
+                  className={`flex items-center gap-1 ${viewerPost.liked_by_me ? "text-red-600" : "text-gray-800"}`}
+                >
+                  <IconHeart filled={!!viewerPost.liked_by_me} />
+                  <span>{viewerPost.likes_count ?? 0}</span>
+                </button>
+                <div className="flex items-center gap-1 text-gray-800">
+                  <IconComment />
+                  <span>{viewerPost.comments_count ?? 0}</span>
+                </div>
+                {userId === viewerPost.user_id && (
+                  <button onClick={() => deletePost(viewerPost)} className="ml-auto text-red-600">
+                    Delete
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-4 flex-1 min-h-0">
+                <div className="max-h-64 overflow-auto space-y-2 pr-1">
+                  {viewerComments.map((c) => (
+                    <div key={c.id} className="flex items-start gap-2">
+                      <img
+                        src={c.user.avatar_url || ""}
+                        onError={(e) => ((e.currentTarget.style.display = "none"))}
+                        className="h-6 w-6 rounded-full object-cover border"
+                      />
+                      <div>
+                        <div className="text-sm font-medium">@{c.user.username}</div>
+                        <div className="text-sm">{c.content}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {!viewerComments.length && (
+                    <div className="text-sm text-gray-500">Be the first to comment</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  className="flex-1 rounded-md border px-3 py-2"
+                  placeholder="Write a comment…"
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                />
+                <Btn onClick={submitComment}>Send</Btn>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
