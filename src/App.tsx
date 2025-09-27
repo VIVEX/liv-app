@@ -1,4 +1,3 @@
-// src/App.tsx
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -337,29 +336,44 @@ export default function App() {
     setComments((data ?? []).map((c: any) => ({ id: c.id, content: c.content, user: c.user })));
   }
 
+  // ⬇️ FIX: sincroniza feed + viewer ao comentar
   async function submitComment() {
     const post = viewerPost ?? activePost;
     if (!post || !userId || !newComment.trim()) return;
+
+    const pid = post.id;
     const content = newComment.trim();
+
     const { error } = await supabase
       .from("comments")
-      .insert({ post_id: post.id, user_id: userId, content });
+      .insert({ post_id: pid, user_id: userId, content });
+
     if (error) {
       alert("Could not comment.");
       return;
     }
+
     setNewComment("");
-    // reload comments for viewer or legacy modal
-    if (viewerOpen && viewerPost) {
-      loadViewerComments(viewerPost.id);
-      setViewerPost({ ...viewerPost, comments_count: (viewerPost.comments_count ?? 0) + 1 });
-    } else if (activePost) {
-      openComments(activePost);
-      setFeed((arr) =>
-        arr.map((p) =>
-          p.id === activePost.id ? { ...p, comments_count: (p.comments_count ?? 0) + 1 } : p
-        )
-      );
+
+    // incrementa no feed para persistir após fechar o modal
+    setFeed((arr) =>
+      arr.map((p) =>
+        p.id === pid ? { ...p, comments_count: (p.comments_count ?? 0) + 1 } : p
+      )
+    );
+
+    // incrementa no viewer, se aberto
+    if (viewerOpen && viewerPost && viewerPost.id === pid) {
+      setViewerPost({
+        ...viewerPost,
+        comments_count: (viewerPost.comments_count ?? 0) + 1,
+      });
+      await loadViewerComments(pid);
+    }
+
+    // se estiver usando o modal antigo de comments, recarrega também
+    if (commentsOpen && activePost && activePost.id === pid) {
+      await openComments(activePost);
     }
   }
 
