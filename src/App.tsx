@@ -1,12 +1,14 @@
+// src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "./lib/supabaseClient";
+import { createPortal } from "react-dom";
+import { User } from "@supabase/supabase-js";
+import supabase from "./lib/supabaseClient";
 
-/** ===========================
- * Types
- * =========================== */
+// --------- Tipos ----------
 type Profile = {
   id: string;
-  username: string;
+  full_name: string | null;
+  username: string | null;
   avatar_url: string | null;
 };
 
@@ -14,13 +16,13 @@ type Post = {
   id: string;
   user_id: string;
   media_url: string;
-  media_type: string; // "image/jpeg" | "video/mp4" | ...
+  media_type: "image" | "video";
   caption: string | null;
   created_at: string;
-  profile?: Profile; // joined
-  likesCount?: number;
-  commentsCount?: number;
-  likedByMe?: boolean;
+  author?: Profile;        // preenchido no client
+  likeCount?: number;      // preenchido no client
+  commentCount?: number;   // preenchido no client
+  likedByMe?: boolean;     // preenchido no client
 };
 
 type Comment = {
@@ -29,498 +31,760 @@ type Comment = {
   user_id: string;
   content: string;
   created_at: string;
-  author?: Profile; // joined
+  author?: Profile;
 };
 
-/** ===========================
- * Small UI helpers
- * =========================== */
-const IconHeart = ({ filled }: { filled?: boolean }) => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.7">
-    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-  </svg>
-);
-const IconChat = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-    <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V5a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v10z" />
-  </svg>
-);
+// --------- Helpers UI ----------
+function IconHeart({ filled }: { filled?: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" className="inline-block align-[-2px]">
+      <path
+        d="M12 21s-6.716-4.534-9.192-7.01A5.5 5.5 0 1 1 12 6.235 5.5 5.5 0 1 1 21.192 13.99C18.716 16.466 12 21 12 21z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+function IconComment() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" className="inline-block align-[-2px]">
+      <path
+        d="M21 12a8.96 8.96 0 0 1-1.8 5.4c-.7.94-1.6 1.7-2.6 2.26-1.5.83-3.2 1.24-4.9 1.24-1.3 0-2.6-.25-3.8-.73L3 21l.83-4.8A9 9 0 1 1 21 12z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+function IconHome({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-6v-6H10v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconSearch({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconPlus({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="M12 8v8M8 12h8" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconUser({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="M4 20c1.8-3.4 5.1-5 8-5s6.2 1.6 8 5" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
 
-/** ===========================
- * Main App
- * =========================== */
+// --------- Modal base ----------
+function Modal({ open, children, onClose }: { open: boolean; children: React.ReactNode; onClose: () => void }) {
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative z-10 w-[min(900px,95vw)] max-h-[90vh] overflow-auto rounded-2xl bg-white p-4 shadow-xl">
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ===========================================
 export default function App() {
-  const [me, setMe] = useState<Profile | null>(null);
+  // auth/profile
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  // feed
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(false);
+
+  // UI state
   const [tab, setTab] = useState<"home" | "search" | "post" | "profile">("home");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [feed, setFeed] = useState<Post[]>([]);
-  const [myPosts, setMyPosts] = useState<Post[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [search, setSearch] = useState("");
-
-  // modal
+  // Post modal
   const [openPost, setOpenPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
 
-  // file inputs (hidden)
-  const postPickerRef = useRef<HTMLInputElement>(null);
-  const avatarPickerRef = useRef<HTMLInputElement>(null);
+  // Post composer (abre só DEPOIS que o arquivo é escolhido)
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerFile, setComposerFile] = useState<File | null>(null);
+  const [composerPreview, setComposerPreview] = useState<string | null>(null);
+  const [composerCaption, setComposerCaption] = useState("");
+  const [uploading, setUploading] = useState(false);
 
-  /** ---------------------------
-   * Auth & my profile
-   * --------------------------- */
+  // ============ Auth ============
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      // fetch my profile
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url")
-        .eq("id", user.id)
-        .single();
-
-      if (prof) setMe(prof);
-
-      // initial loads
-      await Promise.all([loadFeed(), loadMyPosts()]);
-    })();
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user ?? null);
+    };
+    init();
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  /** ---------------------------
-   * Load feed (with counts + likedByMe)
-   * --------------------------- */
-  const attachCountsAndFlags = async (rawPosts: any[]): Promise<Post[]> => {
-    if (!me) return rawPosts as Post[];
-
-    const posts: Post[] = rawPosts.map((p) => ({
-      ...p,
-      profile: p.profiles as Profile,
-      likesCount: 0,
-      commentsCount: 0,
-      likedByMe: false,
-    }));
-
-    // For small scale it's OK to do per-post queries for counts/flags
-    await Promise.all(
-      posts.map(async (p) => {
-        const [{ data: likes }, { data: cmts }, { data: myLike }] = await Promise.all([
-          supabase.from("likes").select("id").eq("post_id", p.id),
-          supabase.from("comments").select("id").eq("post_id", p.id),
-          supabase.from("likes").select("id").eq("post_id", p.id).eq("user_id", me.id).maybeSingle(),
-        ]);
-        p.likesCount = likes?.length || 0;
-        p.commentsCount = cmts?.length || 0;
-        p.likedByMe = !!myLike;
-      })
-    );
-    return posts;
-  };
-
-  const loadFeed = async () => {
-    const { data, error } = await supabase
-      .from("posts")
-      .select("id, user_id, media_url, media_type, caption, created_at, profiles(id, username, avatar_url)")
-      .order("created_at", { ascending: false });
-
-    if (!error && data) {
-      const withExtras = await attachCountsAndFlags(data);
-      setFeed(withExtras);
-    }
-  };
-
-  /** ---------------------------
-   * Load my posts
-   * --------------------------- */
-  const loadMyPosts = async () => {
-    if (!me) return;
-    const { data, error } = await supabase
-      .from("posts")
-      .select("id, user_id, media_url, media_type, caption, created_at, profiles(id, username, avatar_url)")
-      .eq("user_id", me.id)
-      .order("created_at", { ascending: false });
-
-    if (!error && data) {
-      const withExtras = await attachCountsAndFlags(data);
-      setMyPosts(withExtras);
-    }
-  };
-
-  /** ---------------------------
-   * Open post modal + load comments
-   * --------------------------- */
-  const showPost = async (post: Post) => {
-    setOpenPost(post);
-    await loadComments(post.id);
-  };
-
-  const loadComments = async (postId: string) => {
-    const { data, error } = await supabase
-      .from("comments")
-      .select("id, post_id, user_id, content, created_at, profiles(id, username, avatar_url)")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
-
-    if (!error && data) {
-      const items: Comment[] = data.map((c: any) => ({
-        ...c,
-        author: c.profiles as Profile,
-      }));
-      setComments(items);
-    }
-  };
-
-  /** ---------------------------
-   * Likes
-   * --------------------------- */
-  const toggleLike = async (post: Post) => {
-    if (!me) return;
-    if (post.likedByMe) {
-      await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", me.id);
-    } else {
-      await supabase.from("likes").insert([{ post_id: post.id, user_id: me.id }]);
-    }
-    await Promise.all([loadFeed(), loadMyPosts(), openPost ? loadComments(openPost.id) : Promise.resolve()]);
-  };
-
-  /** ---------------------------
-   * Comments (no timestamp rendering + button text "Delete")
-   * --------------------------- */
-  const addComment = async () => {
-    if (!me || !openPost) return;
-    const content = newComment.trim();
-    if (!content) return;
-
-    const { error } = await supabase
-      .from("comments")
-      .insert([{ post_id: openPost.id, user_id: me.id, content }]);
-
-    if (!error) {
-      setNewComment("");
-      await Promise.all([loadComments(openPost.id), loadFeed(), loadMyPosts()]);
-    }
-  };
-
-  const deleteComment = async (id: string) => {
-    if (!openPost) return;
-    await supabase.from("comments").delete().eq("id", id);
-    await Promise.all([loadComments(openPost.id), loadFeed(), loadMyPosts()]);
-  };
-
-  /** ---------------------------
-   * Posts: upload via "+"
-   * (opens file picker immediately; supports image/video)
-   * --------------------------- */
-  const onPlus = () => {
-    postPickerRef.current?.click();
-  };
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!me) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const ext = file.name.split(".").pop() || "bin";
-    const isImage = file.type.startsWith("image");
-    const isVideo = file.type.startsWith("video");
-    if (!isImage && !isVideo) {
-      alert("Selecione uma imagem ou vídeo.");
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      setPosts([]);
       return;
     }
+    const load = async () => {
+      // busca profile
+      const { data: p } = await supabase.from("profiles").select("id, full_name, username, avatar_url").eq("id", user.id).maybeSingle();
+      // fallback: se não existir (em alguns casos raros), cria
+      if (!p) {
+        await supabase.from("profiles").upsert({ id: user.id, username: null, full_name: null, avatar_url: null }, { onConflict: "id" });
+        const { data: p2 } = await supabase.from("profiles").select("id, full_name, username, avatar_url").eq("id", user.id).maybeSingle();
+        setProfile(p2 ?? null);
+      } else {
+        setProfile(p);
+      }
+      await refreshFeed();
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-    const path = `${me.id}/posts/${crypto.randomUUID()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from("media").upload(path, file, {
-      cacheControl: "3600",
-      upsert: false,
+  // ============ Feed ============
+  const refreshFeed = async () => {
+    setLoadingFeed(true);
+    try {
+      const { data: rows, error } = await supabase
+        .from("posts")
+        .select("id,user_id,media_url,media_type,caption,created_at")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      const list: Post[] = rows ?? [];
+
+      // autores
+      const userIds = Array.from(new Set(list.map((p) => p.user_id)));
+      const { data: authors } = await supabase
+        .from("profiles")
+        .select("id,username,avatar_url")
+        .in("id", userIds.length ? userIds : ["00000000-0000-0000-0000-000000000000"]);
+      const mapAuth = new Map<string, Profile>();
+      (authors ?? []).forEach((a) => mapAuth.set(a.id, a as Profile));
+      list.forEach((p) => (p.author = mapAuth.get(p.user_id) ?? null));
+
+      // likes batelados
+      const postIds = list.map((p) => p.id);
+      const { data: likeRows } = await supabase
+        .from("likes")
+        .select("post_id,user_id")
+        .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
+      const likeCount = new Map<string, number>();
+      const likedByMe = new Set<string>();
+      (likeRows ?? []).forEach((r) => {
+        likeCount.set(r.post_id, (likeCount.get(r.post_id) ?? 0) + 1);
+        if (r.user_id === profile?.id) likedByMe.add(r.post_id);
+      });
+
+      // comments batelados
+      const { data: commentRows } = await supabase
+        .from("comments")
+        .select("post_id")
+        .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
+      const commentCount = new Map<string, number>();
+      (commentRows ?? []).forEach((r) => {
+        commentCount.set(r.post_id, (commentCount.get(r.post_id) ?? 0) + 1);
+      });
+
+      list.forEach((p) => {
+        p.likeCount = likeCount.get(p.id) ?? 0;
+        p.commentCount = commentCount.get(p.id) ?? 0;
+        p.likedByMe = likedByMe.has(p.id);
+      });
+
+      setPosts(list);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingFeed(false);
+    }
+  };
+
+  // ============ Auth actions ============
+  const handleLogin = async () => {
+    const redirectTo = window.location.origin;
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
     });
-    if (upErr) {
-      alert("Erro ao enviar arquivo.");
-      return;
-    }
-
-    const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-    const media_url = pub?.publicUrl;
-    const media_type = file.type;
-
-    const { error: insErr } = await supabase.from("posts").insert([
-      { user_id: me.id, media_url, media_type, caption: null },
-    ]);
-    if (insErr) {
-      alert("Erro ao criar post.");
-      return;
-    }
-
-    await Promise.all([loadFeed(), loadMyPosts()]);
+  };
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setTab("home");
   };
 
-  /** ---------------------------
-   * Delete my post
-   * --------------------------- */
-  const deletePost = async (postId: string) => {
-    await supabase.from("posts").delete().eq("id", postId);
-    if (openPost?.id === postId) setOpenPost(null);
-    await Promise.all([loadFeed(), loadMyPosts()]);
+  // ============ Avatar ============
+  const handleAvatarButton = () => {
+    if (!user) return;
+    avatarInputRef.current?.click();
+  };
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f || !profile) return;
+    try {
+      const path = `avatars/${profile.id}-${Date.now()}-${f.name}`;
+      const { error: upErr } = await supabase.storage.from("media").upload(path, f);
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("media").getPublicUrl(path);
+      const nextUrl = urlData.publicUrl;
+      const { error: upProf } = await supabase.from("profiles").update({ avatar_url: nextUrl }).eq("id", profile.id);
+      if (upProf) throw upProf;
+      setProfile({ ...profile, avatar_url: nextUrl });
+      // também atualiza no autor dos posts já carregados
+      setPosts((prev) =>
+        prev.map((p) => (p.author?.id === profile.id ? { ...p, author: { ...(p.author as Profile), avatar_url: nextUrl } } : p))
+      );
+    } catch (err) {
+      alert("Erro ao trocar avatar");
+      console.error(err);
+    } finally {
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
   };
 
-  /** ---------------------------
-   * Avatar change
-   * --------------------------- */
-  const changeAvatarClick = () => avatarPickerRef.current?.click();
-
-  const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!me) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `${me.id}/avatars/avatar.${ext}`;
-    const { error: upErr } = await supabase.storage.from("media").upload(path, file, {
-      upsert: true,
-    });
-    if (upErr) {
-      alert("Erro ao enviar avatar.");
+  // ============ Upload de post ============
+  // Clicar no + já abre o picker
+  const handlePlusClick = () => {
+    if (!user) {
+      handleLogin();
       return;
     }
-    const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-    const avatar_url = pub?.publicUrl;
-
-    await supabase.from("profiles").update({ avatar_url }).eq("id", me.id);
-    setMe((m) => (m ? { ...m, avatar_url } : m));
-    await Promise.all([loadFeed(), loadMyPosts()]);
+    fileInputRef.current?.click();
   };
 
-  /** ---------------------------
-   * Search users (simple)
-   * --------------------------- */
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (tab !== "search") return;
-      const q = search.trim();
-      if (!q) {
-        setProfiles([]);
-        return;
+  // Quando escolher arquivo, abrimos um modal de composição rápido
+  const handlePickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    setComposerFile(f);
+    setComposerPreview(url);
+    setComposerCaption("");
+    setComposerOpen(true);
+    // limpa para permitir escolher o mesmo arquivo depois
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleCreatePost = async () => {
+    if (!composerFile || !profile) return;
+    setUploading(true);
+    try {
+      const ext = composerFile.name.split(".").pop() ?? "bin";
+      const name = `${Date.now()}.${ext}`;
+      const path = `posts/${profile.id}/${name}`;
+
+      const { error: upErr } = await supabase.storage.from("media").upload(path, composerFile, { cacheControl: "3600" });
+      if (upErr) throw upErr;
+
+      const { data: urlData } = supabase.storage.from("media").getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+      const kind: "image" | "video" = composerFile.type.startsWith("video") ? "video" : "image";
+
+      const { data: newRows, error: insErr } = await supabase
+        .from("posts")
+        .insert({ user_id: profile.id, media_url: publicUrl, media_type: kind, caption: composerCaption || null })
+        .select()
+        .limit(1);
+      if (insErr) throw insErr;
+
+      // reflete no feed
+      const created = newRows?.[0] as Post;
+      created.author = { ...profile };
+      created.likeCount = 0;
+      created.commentCount = 0;
+      created.likedByMe = false;
+
+      setPosts((p) => [created, ...p]);
+      setComposerOpen(false);
+      setComposerFile(null);
+      setComposerPreview(null);
+      setComposerCaption("");
+      setTab("home");
+    } catch (err) {
+      alert("Erro ao publicar");
+      console.error(err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ============ Likes ============
+  const toggleLike = async (postId: string) => {
+    if (!profile) return;
+    const target = posts.find((p) => p.id === postId);
+    if (!target) return;
+
+    // otimista
+    const liked = !target.likedByMe;
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId ? { ...p, likedByMe: liked, likeCount: (p.likeCount ?? 0) + (liked ? 1 : -1) } : p
+      )
+    );
+
+    try {
+      if (liked) {
+        const { error } = await supabase.from("likes").insert({ post_id: postId, user_id: profile.id });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("likes").delete().eq("post_id", postId).eq("user_id", profile.id);
+        if (error) throw error;
       }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url")
-        .ilike("username", `%${q}%`)
-        .limit(20);
-      if (active) setProfiles(data || []);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [tab, search]);
+    } catch (err) {
+      // desfaz se falhar
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === postId ? { ...p, likedByMe: !liked, likeCount: (p.likeCount ?? 0) + (liked ? -1 : 1) } : p
+        )
+      );
+      console.error(err);
+      alert("Não foi possível atualizar like");
+    }
+  };
 
-  /** ---------------------------
-   * Render helpers
-   * --------------------------- */
-  const Grid = ({ posts }: { posts: Post[] }) => (
-    <div className="grid grid-cols-3 gap-3">
-      {posts.map((p) => (
-        <button key={p.id} onClick={() => showPost(p)} className="relative rounded-lg overflow-hidden bg-gray-100">
-          {p.media_type?.startsWith("image") ? (
-            <img src={p.media_url} className="w-full h-40 object-cover" />
-          ) : (
-            <video src={p.media_url} className="w-full h-40 object-cover" />
-          )}
-        </button>
-      ))}
-    </div>
-  );
+  // ============ Comments ============
+  const openPostModal = async (post: Post) => {
+    setOpenPost(post);
+    setComments([]);
+    setNewComment("");
+    try {
+      const { data: rows, error } = await supabase
+        .from("comments")
+        .select("id,post_id,user_id,content,created_at")
+        .eq("post_id", post.id)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
 
-  const TopBar = useMemo(
-    () => (
-      <div className="flex items-center justify-between py-4">
-        <div className="flex items-center gap-3">
-          <img
-            src={me?.avatar_url || "https://unavatar.io/placeholder"}
-            className="h-12 w-12 rounded-full object-cover cursor-pointer"
-            onClick={changeAvatarClick}
-          />
-          <div>
-            <div className="font-semibold text-lg">{me?.username || "..."}</div>
-            <div className="text-sm text-gray-500">@{me?.username}</div>
-          </div>
+      const uids = Array.from(new Set(rows?.map((r) => r.user_id) ?? []));
+      const { data: ppl } = await supabase.from("profiles").select("id,username,avatar_url").in("id", uids.length ? uids : ["00000000-0000-0000-0000-000000000000"]);
+      const map = new Map<string, Profile>();
+      (ppl ?? []).forEach((p) => map.set(p.id, p as Profile));
+
+      const withAuthor: Comment[] = (rows ?? []).map((r) => ({ ...r, author: map.get(r.user_id) }));
+      setComments(withAuthor);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const sendComment = async () => {
+    if (!openPost || !profile || !newComment.trim() || savingComment) return;
+    setSavingComment(true);
+    const text = newComment.trim();
+    setNewComment("");
+    try {
+      const { data: rows, error } = await supabase
+        .from("comments")
+        .insert({ post_id: openPost.id, user_id: profile.id, content: text })
+        .select()
+        .limit(1);
+      if (error) throw error;
+
+      const created = rows?.[0] as Comment;
+      created.author = { ...profile };
+      setComments((prev) => [...prev, created]);
+
+      // aumenta contador no feed
+      setPosts((prev) => prev.map((p) => (p.id === openPost.id ? { ...p, commentCount: (p.commentCount ?? 0) + 1 } : p)));
+    } catch (err) {
+      console.error(err);
+      alert("Não foi possível comentar");
+    } finally {
+      setSavingComment(false);
+    }
+  };
+
+  const deleteComment = async (commentId: string) => {
+    if (!profile || !openPost) return;
+    const c = comments.find((x) => x.id === commentId);
+    if (!c || c.user_id !== profile.id) return;
+    const ok = confirm("Apagar comentário?");
+    if (!ok) return;
+
+    // otimista
+    setComments((prev) => prev.filter((x) => x.id !== commentId));
+    setPosts((prev) => prev.map((p) => (p.id === openPost.id ? { ...p, commentCount: Math.max((p.commentCount ?? 1) - 1, 0) } : p)));
+
+    try {
+      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("user_id", profile.id);
+      if (error) throw error;
+    } catch (err) {
+      alert("Falha ao apagar comentário");
+      console.error(err);
+      // rollback simples: recarrega comentários
+      openPostModal(openPost);
+    }
+  };
+
+  // ============ Delete post ============
+  const deletePost = async (postId: string) => {
+    if (!profile) return;
+    const p = posts.find((x) => x.id === postId);
+    if (!p || p.user_id !== profile.id) return;
+    const ok = confirm("Apagar este post?");
+    if (!ok) return;
+
+    // otimista
+    setPosts((prev) => prev.filter((x) => x.id !== postId));
+    setOpenPost(null);
+
+    try {
+      const { error } = await supabase.from("posts").delete().eq("id", postId).eq("user_id", profile.id);
+      if (error) throw error;
+      // objetos no storage permanecem públicos; pode-se adicionar lógica para remover do bucket se quiser
+    } catch (err) {
+      alert("Não foi possível apagar");
+      console.error(err);
+      refreshFeed();
+    }
+  };
+
+  // ============ Computados ============
+  const isLogged = !!user && !!profile;
+  const headerProfile = useMemo(() => {
+    if (!profile) return null;
+    return (
+      <div className="flex items-center gap-3">
+        <img
+          src={profile.avatar_url || "https://unavatar.io/github/placeholder"}
+          alt="avatar"
+          className="h-10 w-10 rounded-full object-cover"
+        />
+        <div className="leading-tight">
+          <div className="font-semibold">{profile.full_name || (profile.username ? profile.username : "Your name")}</div>
+          <div className="text-sm text-gray-500">@{profile.username || "username"}</div>
         </div>
-
-        <button
-          className="px-3 py-1.5 text-sm rounded-md border"
-          onClick={async () => {
-            await supabase.auth.signOut();
-            location.reload();
-          }}
-        >
-          Logout
-        </button>
-
-        {/* hidden inputs */}
-        <input ref={postPickerRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleUpload} />
-        <input ref={avatarPickerRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
       </div>
-    ),
-    [me]
-  );
+    );
+  }, [profile]);
 
-  /** ---------------------------
-   * Main render
-   * --------------------------- */
+  // ============ Render ============
   return (
-    <div className="max-w-3xl mx-auto px-4 pb-24">
-      {TopBar}
+    <div className="mx-auto max-w-4xl px-4 pb-20">
+      <header className="flex items-center justify-between py-4">
+        <div className="text-xl font-bold">LIVET</div>
+        <div className="flex items-center gap-3">
+          {headerProfile}
+          {!isLogged ? (
+            <button onClick={handleLogin} className="rounded-lg border px-3 py-1.5 hover:bg-gray-50">
+              Sign in with Google
+            </button>
+          ) : (
+            <button onClick={handleLogout} className="rounded-lg border px-3 py-1.5 hover:bg-gray-50">
+              Logout
+            </button>
+          )}
+        </div>
+      </header>
 
-      {/* Tabs content (guided by bottom bar) */}
+      {/* HOME */}
       {tab === "home" && (
-        <section className="space-y-6">
-          <Grid posts={feed} />
-        </section>
-      )}
+        <section>
+          {loadingFeed && <div className="py-6 text-center text-gray-500">Carregando…</div>}
+          {!loadingFeed && posts.length === 0 && <div className="py-8 text-center text-gray-500">Sem posts ainda.</div>}
 
-      {tab === "search" && (
-        <section className="space-y-4">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by @username"
-            className="w-full border rounded-md px-3 py-2"
-          />
-          <ul className="divide-y">
-            {profiles.map((p) => (
-              <li key={p.id} className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <img src={p.avatar_url || "https://unavatar.io/placeholder"} className="h-10 w-10 rounded-full object-cover" />
-                  <div className="font-medium">@{p.username}</div>
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {posts.map((post) => (
+              <div key={post.id} className="group">
+                <div
+                  className="aspect-square w-full cursor-pointer overflow-hidden rounded-xl bg-gray-100"
+                  onClick={() => openPostModal(post)}
+                >
+                  {post.media_type === "video" ? (
+                    <video src={post.media_url} className="h-full w-full object-cover" muted playsInline />
+                  ) : (
+                    <img src={post.media_url} className="h-full w-full object-cover" alt="post" />
+                  )}
                 </div>
-              </li>
+
+                <div className="mt-2 flex items-center justify-between text-sm text-gray-700">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => toggleLike(post.id)}
+                      title={post.likedByMe ? "Descurtir" : "Curtir"}
+                      className={post.likedByMe ? "text-red-500" : ""}
+                    >
+                      <IconHeart filled={post.likedByMe} /> {post.likeCount ?? 0}
+                    </button>
+                    <div className="text-gray-500">
+                      <IconComment /> {post.commentCount ?? 0}
+                    </div>
+                  </div>
+                  {profile?.id === post.user_id && (
+                    <button className="text-xs text-red-500 hover:underline" onClick={() => deletePost(post.id)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
-            {profiles.length === 0 && search && <li className="text-sm text-gray-500 py-3">No users</li>}
-          </ul>
+          </div>
         </section>
       )}
 
-      {tab === "post" && (
-        <section className="pt-6">
-          {/* Intencionalmente vazio — o "+" abre o seletor de arquivo direto */}
-          <p className="text-center text-sm text-gray-500">Tap “+” below to create a post.</p>
-        </section>
+      {/* SEARCH (placeholder simples por enquanto) */}
+      {tab === "search" && (
+        <section className="py-16 text-center text-gray-500">Busca virá aqui depois 😉</section>
       )}
 
+      {/* PROFILE */}
       {tab === "profile" && (
-        <section className="space-y-6">
-          <Grid posts={myPosts} />
+        <section className="max-w-2xl">
+          <div className="mb-6 flex items-center gap-4">
+            <div className="relative">
+              <img
+                src={profile?.avatar_url || "https://unavatar.io/github/placeholder"}
+                className="h-24 w-24 rounded-full object-cover"
+                alt="avatar"
+              />
+              <button
+                onClick={handleAvatarButton}
+                className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+              >
+                Change
+              </button>
+            </div>
+            <div>
+              <div className="text-xl font-semibold">{profile?.full_name || "Your name"}</div>
+              <div className="text-gray-500">@{profile?.username || "username"}</div>
+              <button
+                className="mt-2 rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+                onClick={() => alert("Tela de edição do perfil virá depois")}
+              >
+                Edit profile
+              </button>
+            </div>
+          </div>
+
+          {/* Seus posts (filtra da lista carregada) */}
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {posts
+              .filter((p) => p.user_id === profile?.id)
+              .map((post) => (
+                <div key={post.id} className="group">
+                  <div
+                    className="aspect-square w-full cursor-pointer overflow-hidden rounded-xl bg-gray-100"
+                    onClick={() => openPostModal(post)}
+                  >
+                    {post.media_type === "video" ? (
+                      <video src={post.media_url} className="h-full w-full object-cover" muted playsInline />
+                    ) : (
+                      <img src={post.media_url} className="h-full w-full object-cover" alt="post" />
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-sm text-gray-700">
+                    <button
+                      onClick={() => toggleLike(post.id)}
+                      className={post.likedByMe ? "text-red-500" : ""}
+                      title={post.likedByMe ? "Descurtir" : "Curtir"}
+                    >
+                      <IconHeart filled={post.likedByMe} /> {post.likeCount ?? 0}
+                    </button>
+                    <button className="text-xs text-red-500 hover:underline" onClick={() => deletePost(post.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
         </section>
       )}
 
-      {/* Bottom bar */}
-      <nav className="fixed bottom-0 left-0 right-0 border-t bg-white py-2">
-        <div className="max-w-3xl mx-auto flex items-center justify-around text-2xl">
-          <button aria-label="Home" onClick={() => setTab("home")}>🏠</button>
-          <button aria-label="Search" onClick={() => setTab("search")}>🔍</button>
-          <button aria-label="New post" onClick={onPlus}>➕</button>
-          <button aria-label="Profile" onClick={() => setTab("profile")}>👤</button>
+      {/* Bottom Nav (estilo Instagram) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-4xl border-t bg-white">
+        <div className="flex items-center justify-around py-3">
+          <button onClick={() => setTab("home")} aria-label="Home">
+            <IconHome active={tab === "home"} />
+          </button>
+          <button onClick={() => setTab("search")} aria-label="Search">
+            <IconSearch active={tab === "search"} />
+          </button>
+          <button onClick={handlePlusClick} aria-label="New post">
+            <IconPlus active={false} />
+          </button>
+          <button onClick={() => (isLogged ? setTab("profile") : handleLogin())} aria-label="Profile">
+            <IconUser active={tab === "profile"} />
+          </button>
         </div>
       </nav>
 
-      {/* Post modal */}
-      {openPost && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3">
-          <div className="bg-white w-full max-w-3xl rounded-xl overflow-hidden shadow-xl">
-            {/* header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="flex items-center gap-2">
-                <img
-                  src={openPost.profile?.avatar_url || "https://unavatar.io/placeholder"}
-                  className="h-8 w-8 rounded-full object-cover"
-                />
-                <span className="font-medium">@{openPost.profile?.username}</span>
-              </div>
-              <div className="flex items-center gap-4">
-                {openPost.user_id === me?.id && (
-                  <button className="text-red-500 text-sm" onClick={() => deletePost(openPost.id)}>
-                    Delete
-                  </button>
-                )}
-                <button className="text-gray-500" onClick={() => setOpenPost(null)}>✕</button>
-              </div>
-            </div>
+      {/* FILE PICKERS invisíveis */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*,video/*"
+        capture="environment"
+        onChange={handlePickFile}
+      />
+      <input
+        ref={avatarInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={handleAvatarChange}
+      />
 
-            {/* media */}
-            <div className="p-4">
-              {openPost.media_type?.startsWith("image") ? (
-                <img src={openPost.media_url} className="w-full rounded-lg" />
-              ) : (
-                <video src={openPost.media_url} className="w-full rounded-lg" controls />
-              )}
-              {openPost.caption && <p className="mt-2 text-sm text-gray-700">{openPost.caption}</p>}
-            </div>
-
-            {/* actions */}
-            <div className="px-4 pb-3 flex items-center gap-4">
-              <button
-                className={`flex items-center gap-1 ${openPost.likedByMe ? "text-red-600" : ""}`}
-                onClick={() => toggleLike(openPost)}
-              >
-                <IconHeart filled={openPost.likedByMe} />
-                <span className="text-sm">{openPost.likesCount ?? 0}</span>
-              </button>
-              <div className="flex items-center gap-1 text-gray-700">
-                <IconChat />
-                <span className="text-sm">{openPost.commentsCount ?? comments.length}</span>
-              </div>
-            </div>
-
-            {/* comments */}
-            <div className="px-4 pb-4">
-              <div className="rounded-lg border p-3 max-h-64 overflow-auto">
-                {comments.length === 0 ? (
-                  <p className="text-sm text-gray-500">Be the first to comment</p>
+      {/* Composer: abre só DEPOIS de escolher o arquivo */}
+      <Modal open={composerOpen} onClose={() => !uploading && setComposerOpen(false)}>
+        <div className="flex flex-col gap-4">
+          <div className="text-lg font-semibold">Novo post</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border p-2">
+              {composerPreview &&
+                (composerFile?.type.startsWith("video") ? (
+                  <video src={composerPreview} controls className="mx-auto max-h-[60vh] rounded-md" />
                 ) : (
-                  <ul className="space-y-3">
-                    {comments.map((c) => (
-                      <li key={c.id} className="flex items-start gap-2">
-                        <img
-                          src={c.author?.avatar_url || "https://unavatar.io/placeholder"}
-                          className="h-7 w-7 rounded-full object-cover"
-                        />
-                        <div className="flex-1">
-                          <p className="text-sm">
-                            <span className="font-medium mr-1">@{c.author?.username || "user"}</span>
-                            {c.content}
-                          </p>
-                          {/* intentionally no timestamp here */}
-                        </div>
-                        {c.user_id === me?.id && (
-                          <button onClick={() => deleteComment(c.id)} className="text-xs text-red-500 hover:underline">
-                            Delete
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {/* add comment */}
-              <div className="mt-3 flex gap-2">
-                <input
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addComment()}
-                  placeholder="Write a comment..."
-                  className="flex-1 border rounded-md px-3 py-2 text-sm"
-                />
-                <button onClick={addComment} className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm">
-                  Send
+                  <img src={composerPreview} alt="preview" className="mx-auto max-h-[60vh] rounded-md" />
+                ))}
+            </div>
+            <div className="flex flex-col gap-3">
+              <label className="text-sm font-medium">Caption (opcional)</label>
+              <textarea
+                value={composerCaption}
+                onChange={(e) => setComposerCaption(e.target.value)}
+                className="min-h-[120px] w-full rounded-lg border p-2 outline-none focus:ring"
+                placeholder="Escreva algo..."
+              />
+              <div className="mt-auto flex items-center justify-end gap-2">
+                <button
+                  className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+                  disabled={uploading}
+                  onClick={() => setComposerOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="rounded-lg bg-black px-4 py-1.5 text-white disabled:opacity-50"
+                  onClick={handleCreatePost}
+                  disabled={uploading}
+                >
+                  {uploading ? "Publicando…" : "Publicar"}
                 </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </Modal>
+
+      {/* Post Modal */}
+      <Modal open={!!openPost} onClose={() => setOpenPost(null)}>
+        {openPost && (
+          <div className="grid gap-4 md:grid-cols-[1fr,380px]">
+            <div className="rounded-xl bg-black/5 p-2">
+              {openPost.media_type === "video" ? (
+                <video src={openPost.media_url} controls className="mx-auto max-h-[70vh] rounded-md" />
+              ) : (
+                <img src={openPost.media_url} className="mx-auto max-h-[70vh] rounded-md" alt="post" />
+              )}
+            </div>
+            <div className="flex min-h-[300px] flex-col">
+              {/* Cabeçalho do autor */}
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={openPost.author?.avatar_url || "https://unavatar.io/github/placeholder"}
+                    className="h-8 w-8 rounded-full object-cover"
+                  />
+                  <div className="font-medium">@{openPost.author?.username || "username"}</div>
+                </div>
+                {profile?.id === openPost.user_id && (
+                  <button className="text-sm text-red-500 hover:underline" onClick={() => deletePost(openPost.id)}>
+                    Delete
+                  </button>
+                )}
+              </div>
+
+              {/* Ações */}
+              <div className="mb-3 flex items-center gap-4">
+                <button
+                  onClick={() => toggleLike(openPost.id)}
+                  className={`text-lg ${openPost.likedByMe ? "text-red-500" : ""}`}
+                >
+                  <IconHeart filled={openPost.likedByMe} /> {openPost.likeCount ?? 0}
+                </button>
+                <div className="text-gray-600">
+                  <IconComment /> {openPost.commentCount ?? 0}
+                </div>
+              </div>
+
+              {/* Comentários */}
+              <div className="grow space-y-3 overflow-auto rounded-md border p-2">
+                {comments.length === 0 && <div className="text-sm text-gray-500">Be the first to comment</div>}
+                {comments.map((c) => (
+                  <div key={c.id} className="flex items-start gap-2">
+                    <img
+                      src={c.author?.avatar_url || "https://unavatar.io/github/placeholder"}
+                      className="mt-0.5 h-7 w-7 rounded-full object-cover"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm">
+                        <span className="font-medium mr-1">@{c.author?.username || "user"}</span>
+                        {c.content}
+                      </div>
+                      <div className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString()}</div>
+                    </div>
+                    {c.user_id === profile?.id && (
+                      <button
+                        className="text-xs text-red-500 hover:underline"
+                        onClick={() => deleteComment(c.id)}
+                        title="Apagar comentário"
+                      >
+                        apagar
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Caixa de comentário */}
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder="Write a comment..."
+                  className="w-full rounded-lg border px-3 py-2 outline-none focus:ring"
+                />
+                <button
+                  onClick={sendComment}
+                  disabled={savingComment || !newComment.trim()}
+                  className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-40"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
