@@ -1,10 +1,10 @@
+// src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createClient, User, Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabaseClient";
+import { createPortal } from "react-dom";
+import { User } from "@supabase/supabase-js";
+import supabase from "./lib/supabaseClient";
 
-// -----------------------------
-// Tipos
-// -----------------------------
+// --------- Tipos ----------
 type Profile = {
   id: string;
   full_name: string | null;
@@ -19,9 +19,10 @@ type Post = {
   media_type: "image" | "video";
   caption: string | null;
   created_at: string;
-  author?: Profile;
-  likes_count?: number;
-  comments_count?: number;
+  author?: Profile;        // preenchido no client
+  likeCount?: number;      // preenchido no client
+  commentCount?: number;   // preenchido no client
+  likedByMe?: boolean;     // preenchido no client
 };
 
 type Comment = {
@@ -33,589 +34,757 @@ type Comment = {
   author?: Profile;
 };
 
-// -----------------------------
-// Helpers visuais
-// -----------------------------
-const IconHeart = ({ filled = false }: { filled?: boolean }) => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor">
-    <path d="M20.8 4.6c-1.9-1.8-5-1.8-6.9.1l-.9.9-.9-.9c-1.9-1.9-5-1.9-6.9-.1-2.1 2-2.1 5.3 0 7.3l7.8 7.5 7.8-7.5c2.1-2 2.1-5.3 0-7.3z"/>
-  </svg>
-);
+// --------- Helpers UI ----------
+function IconHeart({ filled }: { filled?: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" className="inline-block align-[-2px]">
+      <path
+        d="M12 21s-6.716-4.534-9.192-7.01A5.5 5.5 0 1 1 12 6.235 5.5 5.5 0 1 1 21.192 13.99C18.716 16.466 12 21 12 21z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+function IconComment() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" className="inline-block align-[-2px]">
+      <path
+        d="M21 12a8.96 8.96 0 0 1-1.8 5.4c-.7.94-1.6 1.7-2.6 2.26-1.5.83-3.2 1.24-4.9 1.24-1.3 0-2.6-.25-3.8-.73L3 21l.83-4.8A9 9 0 1 1 21 12z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+function IconHome({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-6v-6H10v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconSearch({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconPlus({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="M12 8v8M8 12h8" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
+function IconUser({ active }: { active?: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" className={active ? "text-black" : "text-gray-500"}>
+      <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+      <path d="M4 20c1.8-3.4 5.1-5 8-5s6.2 1.6 8 5" fill="none" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  );
+}
 
-const IconChat = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-    <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V5a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v10z"/>
-  </svg>
-);
+// --------- Modal base ----------
+function Modal({ open, children, onClose }: { open: boolean; children: React.ReactNode; onClose: () => void }) {
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative z-10 w-[min(900px,95vw)] max-h-[90vh] overflow-auto rounded-2xl bg-white p-4 shadow-xl">
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
 
-const IconHome = ({ active }: { active?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ opacity: active ? 1 : 0.6 }}>
-    <path d="M3 9.5 12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V9.5z"/>
-  </svg>
-);
-const IconSearch = ({ active }: { active?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ opacity: active ? 1 : 0.6 }}>
-    <circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/>
-  </svg>
-);
-const IconPlus = ({ active }: { active?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ opacity: active ? 1 : 0.6 }}>
-    <path d="M12 5v14M5 12h14"/>
-  </svg>
-);
-const IconUser = ({ active }: { active?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ opacity: active ? 1 : 0.6 }}>
-    <path d="M20 21a8 8 0 1 0-16 0"/><circle cx="12" cy="7" r="4"/>
-  </svg>
-);
-
-// -----------------------------
-// App
-// -----------------------------
+// ===========================================
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const user = session?.user ?? null;
+  // auth/profile
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
-  const [me, setMe] = useState<Profile | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "search" | "post" | "profile">("home");
-
-  // Feed e modal
+  // feed
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(false);
+
+  // UI state
+  const [tab, setTab] = useState<"home" | "search" | "post" | "profile">("home");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Post modal
   const [openPost, setOpenPost] = useState<Post | null>(null);
-
-  // Comentários no modal
   const [comments, setComments] = useState<Comment[]>([]);
-  const [sendingComment, setSendingComment] = useState(false);
-  const commentInput = useRef<HTMLInputElement>(null);
+  const [newComment, setNewComment] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
 
-  // Upload post
+  // Post composer (abre só DEPOIS que o arquivo é escolhido)
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerFile, setComposerFile] = useState<File | null>(null);
+  const [composerPreview, setComposerPreview] = useState<string | null>(null);
+  const [composerCaption, setComposerCaption] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [caption, setCaption] = useState("");
 
-  // ------------- Auth -------------
+  // ============ Auth ============
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user ?? null);
+    };
+    init();
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const signInWithGoogle = async () => {
-    const siteUrl = window.location.origin;
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      setPosts([]);
+      return;
+    }
+    const load = async () => {
+      // busca profile
+      const { data: p } = await supabase.from("profiles").select("id, full_name, username, avatar_url").eq("id", user.id).maybeSingle();
+      // fallback: se não existir (em alguns casos raros), cria
+      if (!p) {
+        await supabase.from("profiles").upsert({ id: user.id, username: null, full_name: null, avatar_url: null }, { onConflict: "id" });
+        const { data: p2 } = await supabase.from("profiles").select("id, full_name, username, avatar_url").eq("id", user.id).maybeSingle();
+        setProfile(p2 ?? null);
+      } else {
+        setProfile(p);
+      }
+      await refreshFeed();
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // ============ Feed ============
+  const refreshFeed = async () => {
+    setLoadingFeed(true);
+    try {
+      const { data: rows, error } = await supabase
+        .from("posts")
+        .select("id,user_id,media_url,media_type,caption,created_at")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      const list: Post[] = rows ?? [];
+
+      // autores
+      const userIds = Array.from(new Set(list.map((p) => p.user_id)));
+      const { data: authors } = await supabase
+        .from("profiles")
+        .select("id,username,avatar_url")
+        .in("id", userIds.length ? userIds : ["00000000-0000-0000-0000-000000000000"]);
+      const mapAuth = new Map<string, Profile>();
+      (authors ?? []).forEach((a) => mapAuth.set(a.id, a as Profile));
+      list.forEach((p) => (p.author = mapAuth.get(p.user_id) ?? null));
+
+      // likes batelados
+      const postIds = list.map((p) => p.id);
+      const { data: likeRows } = await supabase
+        .from("likes")
+        .select("post_id,user_id")
+        .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
+      const likeCount = new Map<string, number>();
+      const likedByMe = new Set<string>();
+      (likeRows ?? []).forEach((r) => {
+        likeCount.set(r.post_id, (likeCount.get(r.post_id) ?? 0) + 1);
+        if (r.user_id === profile?.id) likedByMe.add(r.post_id);
+      });
+
+      // comments batelados
+      const { data: commentRows } = await supabase
+        .from("comments")
+        .select("post_id")
+        .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
+      const commentCount = new Map<string, number>();
+      (commentRows ?? []).forEach((r) => {
+        commentCount.set(r.post_id, (commentCount.get(r.post_id) ?? 0) + 1);
+      });
+
+      list.forEach((p) => {
+        p.likeCount = likeCount.get(p.id) ?? 0;
+        p.commentCount = commentCount.get(p.id) ?? 0;
+        p.likedByMe = likedByMe.has(p.id);
+      });
+
+      setPosts(list);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingFeed(false);
+    }
+  };
+
+  // ============ Auth actions ============
+  const handleLogin = async () => {
+    const redirectTo = window.location.origin;
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: `${siteUrl}/`,
-        queryParams: { prompt: "select_account" },
-      },
+      options: { redirectTo },
     });
   };
-
-  const signOut = async () => {
+  const handleLogout = async () => {
     await supabase.auth.signOut();
-    setMe(null);
-    setPosts([]);
+    setTab("home");
   };
 
-  // ------------- Perfil (me) -------------
-  useEffect(() => {
+  // ============ Avatar ============
+  const handleAvatarButton = () => {
     if (!user) return;
-    (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, username, avatar_url")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (error) console.error(error);
-      setMe(data ?? null);
-    })();
-  }, [user?.id]);
-
-  const ensureUsername = async () => {
-    if (!user || !me) return;
-    if (me.username && me.username.trim().length > 0) return;
-    // gera um @username simples baseado no email
-    const base = (user.email ?? "user").split("@")[0].replace(/[^a-z0-9_]/gi, "");
-    const candidate = base.length ? base : "user";
-    const wanted = candidate.slice(0, 18);
-    await supabase.from("profiles").update({ username: wanted }).eq("id", user.id);
-    setMe((m) => (m ? { ...m, username: wanted } : m));
+    avatarInputRef.current?.click();
   };
-
-  useEffect(() => { ensureUsername(); }, [me?.username, user?.id]);
-
-  // ------------- Feed -------------
-  const fetchFeed = async () => {
-    setLoadingFeed(true);
-    // busca posts + contadores
-    const { data: rows, error } = await supabase
-      .from("posts")
-      .select("id, user_id, media_url, media_type, caption, created_at")
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error(error);
-      setLoadingFeed(false);
-      return;
-    }
-
-    const ids = rows.map((r) => r.user_id);
-    const uniqueIds = Array.from(new Set(ids));
-    const { data: authors } = await supabase
-      .from("profiles")
-      .select("id, full_name, username, avatar_url")
-      .in("id", uniqueIds.length ? uniqueIds : ["00000000-0000-0000-0000-000000000000"]);
-
-    // contadores
-    const { data: likesAgg } = await supabase
-      .from("likes")
-      .select("post_id")
-      .limit(1_000_000);
-    const { data: commentsAgg } = await supabase
-      .from("comments")
-      .select("post_id")
-      .limit(1_000_000);
-
-    const likeCountMap = new Map<string, number>();
-    likesAgg?.forEach((l: any) => likeCountMap.set(l.post_id, (likeCountMap.get(l.post_id) ?? 0) + 1));
-    const commentCountMap = new Map<string, number>();
-    commentsAgg?.forEach((c: any) => commentCountMap.set(c.post_id, (commentCountMap.get(c.post_id) ?? 0) + 1));
-
-    const byId = new Map((authors ?? []).map((a) => [a.id, a]));
-    const merged: Post[] = rows.map((r) => ({
-      ...r,
-      author: byId.get(r.user_id) ?? undefined,
-      likes_count: likeCountMap.get(r.id) ?? 0,
-      comments_count: commentCountMap.get(r.id) ?? 0,
-    }));
-    setPosts(merged);
-    setLoadingFeed(false);
-  };
-
-  useEffect(() => { fetchFeed(); }, [user?.id]);
-
-  // ------------- Likes -------------
-  const toggleLike = async (post: Post) => {
-    if (!user) return signInWithGoogle();
-    // checa se já existe like
-    const { data: current } = await supabase
-      .from("likes")
-      .select("id")
-      .eq("post_id", post.id)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (current) {
-      await supabase.from("likes").delete().eq("id", current.id);
-      setPosts((arr) =>
-        arr.map((p) => (p.id === post.id ? { ...p, likes_count: Math.max((p.likes_count ?? 1) - 1, 0) } : p)),
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f || !profile) return;
+    try {
+      const path = `avatars/${profile.id}-${Date.now()}-${f.name}`;
+      const { error: upErr } = await supabase.storage.from("media").upload(path, f);
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("media").getPublicUrl(path);
+      const nextUrl = urlData.publicUrl;
+      const { error: upProf } = await supabase.from("profiles").update({ avatar_url: nextUrl }).eq("id", profile.id);
+      if (upProf) throw upProf;
+      setProfile({ ...profile, avatar_url: nextUrl });
+      // também atualiza no autor dos posts já carregados
+      setPosts((prev) =>
+        prev.map((p) => (p.author?.id === profile.id ? { ...p, author: { ...(p.author as Profile), avatar_url: nextUrl } } : p))
       );
-    } else {
-      await supabase.from("likes").insert({ post_id: post.id, user_id: user.id });
-      setPosts((arr) => arr.map((p) => (p.id === post.id ? { ...p, likes_count: (p.likes_count ?? 0) + 1 } : p)));
+    } catch (err) {
+      alert("Erro ao trocar avatar");
+      console.error(err);
+    } finally {
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
     }
   };
 
-  // ------------- Comentários -------------
-  const loadComments = async (postId: string) => {
-    const { data, error } = await supabase
-      .from("comments")
-      .select("id, post_id, user_id, content, created_at")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
-
-    if (error) {
-      console.error(error);
-      setComments([]);
+  // ============ Upload de post ============
+  // Clicar no + já abre o picker
+  const handlePlusClick = () => {
+    if (!user) {
+      handleLogin();
       return;
     }
+    fileInputRef.current?.click();
+  };
 
-    const uids = Array.from(new Set(data.map((c) => c.user_id)));
-    const { data: authors } = await supabase
-      .from("profiles")
-      .select("id, full_name, username, avatar_url")
-      .in("id", uids.length ? uids : ["00000000-0000-0000-0000-000000000000"]);
+  // Quando escolher arquivo, abrimos um modal de composição rápido
+  const handlePickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    setComposerFile(f);
+    setComposerPreview(url);
+    setComposerCaption("");
+    setComposerOpen(true);
+    // limpa para permitir escolher o mesmo arquivo depois
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
-    const byId = new Map((authors ?? []).map((a) => [a.id, a]));
-    setComments(data.map((c) => ({ ...c, author: byId.get(c.user_id) })));
+  const handleCreatePost = async () => {
+    if (!composerFile || !profile) return;
+    setUploading(true);
+    try {
+      const ext = composerFile.name.split(".").pop() ?? "bin";
+      const name = `${Date.now()}.${ext}`;
+      const path = `posts/${profile.id}/${name}`;
+
+      const { error: upErr } = await supabase.storage.from("media").upload(path, composerFile, { cacheControl: "3600" });
+      if (upErr) throw upErr;
+
+      const { data: urlData } = supabase.storage.from("media").getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+      const kind: "image" | "video" = composerFile.type.startsWith("video") ? "video" : "image";
+
+      const { data: newRows, error: insErr } = await supabase
+        .from("posts")
+        .insert({ user_id: profile.id, media_url: publicUrl, media_type: kind, caption: composerCaption || null })
+        .select()
+        .limit(1);
+      if (insErr) throw insErr;
+
+      // reflete no feed
+      const created = newRows?.[0] as Post;
+      created.author = { ...profile };
+      created.likeCount = 0;
+      created.commentCount = 0;
+      created.likedByMe = false;
+
+      setPosts((p) => [created, ...p]);
+      setComposerOpen(false);
+      setComposerFile(null);
+      setComposerPreview(null);
+      setComposerCaption("");
+      setTab("home");
+    } catch (err) {
+      alert("Erro ao publicar");
+      console.error(err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ============ Likes ============
+  const toggleLike = async (postId: string) => {
+    if (!profile) return;
+    const target = posts.find((p) => p.id === postId);
+    if (!target) return;
+
+    // otimista
+    const liked = !target.likedByMe;
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId ? { ...p, likedByMe: liked, likeCount: (p.likeCount ?? 0) + (liked ? 1 : -1) } : p
+      )
+    );
+
+    try {
+      if (liked) {
+        const { error } = await supabase.from("likes").insert({ post_id: postId, user_id: profile.id });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("likes").delete().eq("post_id", postId).eq("user_id", profile.id);
+        if (error) throw error;
+      }
+    } catch (err) {
+      // desfaz se falhar
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === postId ? { ...p, likedByMe: !liked, likeCount: (p.likeCount ?? 0) + (liked ? -1 : 1) } : p
+        )
+      );
+      console.error(err);
+      alert("Não foi possível atualizar like");
+    }
+  };
+
+  // ============ Comments ============
+  const openPostModal = async (post: Post) => {
+    setOpenPost(post);
+    setComments([]);
+    setNewComment("");
+    try {
+      const { data: rows, error } = await supabase
+        .from("comments")
+        .select("id,post_id,user_id,content,created_at")
+        .eq("post_id", post.id)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+
+      const uids = Array.from(new Set(rows?.map((r) => r.user_id) ?? []));
+      const { data: ppl } = await supabase.from("profiles").select("id,username,avatar_url").in("id", uids.length ? uids : ["00000000-0000-0000-0000-000000000000"]);
+      const map = new Map<string, Profile>();
+      (ppl ?? []).forEach((p) => map.set(p.id, p as Profile));
+
+      const withAuthor: Comment[] = (rows ?? []).map((r) => ({ ...r, author: map.get(r.user_id) }));
+      setComments(withAuthor);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const sendComment = async () => {
-    if (!user || !openPost) return;
-    const text = (commentInput.current?.value ?? "").trim();
-    if (!text) return;
-
-    setSendingComment(true);
-    const { error } = await supabase.from("comments").insert({
-      post_id: openPost.id,
-      user_id: user.id,
-      content: text,
-    });
-    setSendingComment(false);
-
-    if (!error) {
-      commentInput.current!.value = "";
-      await loadComments(openPost.id);
-      // atualiza contador no feed
-      setPosts((arr) =>
-        arr.map((p) => (p.id === openPost.id ? { ...p, comments_count: (p.comments_count ?? 0) + 1 } : p)),
-      );
-    } else {
-      alert("Erro ao comentar.");
-      console.error(error);
-    }
-  };
-
-  // ------------- Upload Post -------------
-  const onUploadPost = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!user) return signInWithGoogle();
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+    if (!openPost || !profile || !newComment.trim() || savingComment) return;
+    setSavingComment(true);
+    const text = newComment.trim();
+    setNewComment("");
     try {
-      setUploading(true);
-      const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
-      const path = `${user.id}/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("media").upload(path, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-      if (upErr) throw upErr;
+      const { data: rows, error } = await supabase
+        .from("comments")
+        .insert({ post_id: openPost.id, user_id: profile.id, content: text })
+        .select()
+        .limit(1);
+      if (error) throw error;
 
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-      const media_type = file.type.startsWith("video") ? "video" : "image";
+      const created = rows?.[0] as Comment;
+      created.author = { ...profile };
+      setComments((prev) => [...prev, created]);
 
-      const { error: insErr } = await supabase.from("posts").insert({
-        user_id: user.id,
-        media_url: pub.publicUrl,
-        media_type,
-        caption: caption || null,
-      });
-      if (insErr) throw insErr;
-
-      setCaption("");
-      await fetchFeed();
-      setActiveTab("home");
+      // aumenta contador no feed
+      setPosts((prev) => prev.map((p) => (p.id === openPost.id ? { ...p, commentCount: (p.commentCount ?? 0) + 1 } : p)));
     } catch (err) {
       console.error(err);
-      alert("Erro ao publicar.");
+      alert("Não foi possível comentar");
     } finally {
-      setUploading(false);
-      e.target.value = "";
+      setSavingComment(false);
     }
   };
 
-  // ------------- Avatar -------------
-  const onUploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!user) return signInWithGoogle();
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const deleteComment = async (commentId: string) => {
+    if (!profile || !openPost) return;
+    const c = comments.find((x) => x.id === commentId);
+    if (!c || c.user_id !== profile.id) return;
+    const ok = confirm("Apagar comentário?");
+    if (!ok) return;
+
+    // otimista
+    setComments((prev) => prev.filter((x) => x.id !== commentId));
+    setPosts((prev) => prev.map((p) => (p.id === openPost.id ? { ...p, commentCount: Math.max((p.commentCount ?? 1) - 1, 0) } : p)));
 
     try {
-      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `avatars/${user.id}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("media").upload(path, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from("media").getPublicUrl(path);
-
-      const { error: upProf } = await supabase.from("profiles").update({ avatar_url: pub.publicUrl }).eq("id", user.id);
-      if (upProf) throw upProf;
-      setMe((m) => (m ? { ...m, avatar_url: pub.publicUrl } : m));
+      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("user_id", profile.id);
+      if (error) throw error;
     } catch (err) {
+      alert("Falha ao apagar comentário");
       console.error(err);
-      alert("Erro ao trocar avatar.");
+      // rollback simples: recarrega comentários
+      openPostModal(openPost);
     }
   };
 
-  // ------------- Delete Post -------------
+  // ============ Delete post ============
   const deletePost = async (postId: string) => {
-    if (!confirm("Delete this post?")) return;
-    const { error } = await supabase.from("posts").delete().eq("id", postId);
-    if (error) {
-      console.error(error);
-      alert("Erro ao deletar.");
-      return;
+    if (!profile) return;
+    const p = posts.find((x) => x.id === postId);
+    if (!p || p.user_id !== profile.id) return;
+    const ok = confirm("Apagar este post?");
+    if (!ok) return;
+
+    // otimista
+    setPosts((prev) => prev.filter((x) => x.id !== postId));
+    setOpenPost(null);
+
+    try {
+      const { error } = await supabase.from("posts").delete().eq("id", postId).eq("user_id", profile.id);
+      if (error) throw error;
+      // objetos no storage permanecem públicos; pode-se adicionar lógica para remover do bucket se quiser
+    } catch (err) {
+      alert("Não foi possível apagar");
+      console.error(err);
+      refreshFeed();
     }
-    setPosts((arr) => arr.filter((p) => p.id !== postId));
-    if (openPost?.id === postId) setOpenPost(null);
   };
 
-  // ---------------- UI helpers ----------------
-  const isLikedByMe = async (postId: string): Promise<boolean> => {
-    if (!user) return false;
-    const { data } = await supabase
-      .from("likes")
-      .select("id")
-      .eq("post_id", postId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    return !!data;
-  };
-
-  // ---------------- Render ----------------
-  const Header = () => (
-    <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200">
-          {me?.avatar_url ? (
-            <img src={me.avatar_url} alt="avatar" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full grid place-content-center text-sm text-gray-500">?</div>
-          )}
-        </div>
-        <div>
-          <div className="font-semibold">{me?.full_name || "Andrex"}</div>
-          <div className="text-sm text-gray-500">@{me?.username || "username"}</div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        {!user ? (
-          <button onClick={signInWithGoogle} className="px-3 py-1.5 border rounded-md">
-            Sign in with Google
-          </button>
-        ) : (
-          <button onClick={signOut} className="px-3 py-1.5 border rounded-md">
-            Logout
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
-  const GridPost = ({ post }: { post: Post }) => {
-    const open = () => {
-      setOpenPost(post);
-      loadComments(post.id);
-    };
+  // ============ Computados ============
+  const isLogged = !!user && !!profile;
+  const headerProfile = useMemo(() => {
+    if (!profile) return null;
     return (
-      <div className="relative">
-        <button onClick={open} className="block w-full">
-          {post.media_type === "video" ? (
-            <video src={post.media_url} className="w-full h-64 object-cover rounded-xl" controls preload="metadata" />
-          ) : (
-            <img src={post.media_url} className="w-full h-64 object-cover rounded-xl" />
-          )}
-        </button>
-        <div className="mt-2 flex items-center gap-4 text-gray-700 text-sm">
-          <div className="flex items-center gap-1">
-            <IconHeart /> {post.likes_count ?? 0}
-          </div>
-          <div className="flex items-center gap-1">
-            <IconChat /> {post.comments_count ?? 0}
-          </div>
-          {user?.id === post.user_id && (
-            <button onClick={() => deletePost(post.id)} className="ml-auto text-red-500 text-sm">
-              Delete
-            </button>
-          )}
+      <div className="flex items-center gap-3">
+        <img
+          src={profile.avatar_url || "https://unavatar.io/github/placeholder"}
+          alt="avatar"
+          className="h-10 w-10 rounded-full object-cover"
+        />
+        <div className="leading-tight">
+          <div className="font-semibold">{profile.full_name || (profile.username ? profile.username : "Your name")}</div>
+          <div className="text-sm text-gray-500">@{profile.username || "username"}</div>
         </div>
       </div>
     );
-  };
+  }, [profile]);
 
-  const ModalPost = () =>
-    openPost ? (
-      <div className="fixed inset-0 z-50 bg-black/50 grid place-items-center p-4" onClick={() => setOpenPost(null)}>
-        <div className="bg-white w-full max-w-3xl rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-          <div className="grid md:grid-cols-2 gap-0">
-            <div className="bg-black/5">
+  // ============ Render ============
+  return (
+    <div className="mx-auto max-w-4xl px-4 pb-20">
+      <header className="flex items-center justify-between py-4">
+        <div className="text-xl font-bold">LIVET</div>
+        <div className="flex items-center gap-3">
+          {headerProfile}
+          {!isLogged ? (
+            <button onClick={handleLogin} className="rounded-lg border px-3 py-1.5 hover:bg-gray-50">
+              Sign in with Google
+            </button>
+          ) : (
+            <button onClick={handleLogout} className="rounded-lg border px-3 py-1.5 hover:bg-gray-50">
+              Logout
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* HOME */}
+      {tab === "home" && (
+        <section>
+          {loadingFeed && <div className="py-6 text-center text-gray-500">Carregando…</div>}
+          {!loadingFeed && posts.length === 0 && <div className="py-8 text-center text-gray-500">Sem posts ainda.</div>}
+
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {posts.map((post) => (
+              <div key={post.id} className="group">
+                <div
+                  className="aspect-square w-full cursor-pointer overflow-hidden rounded-xl bg-gray-100"
+                  onClick={() => openPostModal(post)}
+                >
+                  {post.media_type === "video" ? (
+                    <video src={post.media_url} className="h-full w-full object-cover" muted playsInline />
+                  ) : (
+                    <img src={post.media_url} className="h-full w-full object-cover" alt="post" />
+                  )}
+                </div>
+
+                <div className="mt-2 flex items-center justify-between text-sm text-gray-700">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => toggleLike(post.id)}
+                      title={post.likedByMe ? "Descurtir" : "Curtir"}
+                      className={post.likedByMe ? "text-red-500" : ""}
+                    >
+                      <IconHeart filled={post.likedByMe} /> {post.likeCount ?? 0}
+                    </button>
+                    <div className="text-gray-500">
+                      <IconComment /> {post.commentCount ?? 0}
+                    </div>
+                  </div>
+                  {profile?.id === post.user_id && (
+                    <button className="text-xs text-red-500 hover:underline" onClick={() => deletePost(post.id)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* SEARCH (placeholder simples por enquanto) */}
+      {tab === "search" && (
+        <section className="py-16 text-center text-gray-500">Busca virá aqui depois 😉</section>
+      )}
+
+      {/* PROFILE */}
+      {tab === "profile" && (
+        <section className="max-w-2xl">
+          <div className="mb-6 flex items-center gap-4">
+            <div className="relative">
+              <img
+                src={profile?.avatar_url || "https://unavatar.io/github/placeholder"}
+                className="h-24 w-24 rounded-full object-cover"
+                alt="avatar"
+              />
+              <button
+                onClick={handleAvatarButton}
+                className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+              >
+                Change
+              </button>
+            </div>
+            <div>
+              <div className="text-xl font-semibold">{profile?.full_name || "Your name"}</div>
+              <div className="text-gray-500">@{profile?.username || "username"}</div>
+              <button
+                className="mt-2 rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
+                onClick={() => alert("Tela de edição do perfil virá depois")}
+              >
+                Edit profile
+              </button>
+            </div>
+          </div>
+
+          {/* Seus posts (filtra da lista carregada) */}
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {posts
+              .filter((p) => p.user_id === profile?.id)
+              .map((post) => (
+                <div key={post.id} className="group">
+                  <div
+                    className="aspect-square w-full cursor-pointer overflow-hidden rounded-xl bg-gray-100"
+                    onClick={() => openPostModal(post)}
+                  >
+                    {post.media_type === "video" ? (
+                      <video src={post.media_url} className="h-full w-full object-cover" muted playsInline />
+                    ) : (
+                      <img src={post.media_url} className="h-full w-full object-cover" alt="post" />
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-sm text-gray-700">
+                    <button
+                      onClick={() => toggleLike(post.id)}
+                      className={post.likedByMe ? "text-red-500" : ""}
+                      title={post.likedByMe ? "Descurtir" : "Curtir"}
+                    >
+                      <IconHeart filled={post.likedByMe} /> {post.likeCount ?? 0}
+                    </button>
+                    <button className="text-xs text-red-500 hover:underline" onClick={() => deletePost(post.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+
+      {/* Bottom Nav (estilo Instagram) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-4xl border-t bg-white">
+        <div className="flex items-center justify-around py-3">
+          <button onClick={() => setTab("home")} aria-label="Home">
+            <IconHome active={tab === "home"} />
+          </button>
+          <button onClick={() => setTab("search")} aria-label="Search">
+            <IconSearch active={tab === "search"} />
+          </button>
+          <button onClick={handlePlusClick} aria-label="New post">
+            <IconPlus active={false} />
+          </button>
+          <button onClick={() => (isLogged ? setTab("profile") : handleLogin())} aria-label="Profile">
+            <IconUser active={tab === "profile"} />
+          </button>
+        </div>
+      </nav>
+
+      {/* FILE PICKERS invisíveis */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*,video/*"
+        capture="environment"
+        onChange={handlePickFile}
+      />
+      <input
+        ref={avatarInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={handleAvatarChange}
+      />
+
+      {/* Composer: abre só DEPOIS de escolher o arquivo */}
+      <Modal open={composerOpen} onClose={() => !uploading && setComposerOpen(false)}>
+        <div className="flex flex-col gap-4">
+          <div className="text-lg font-semibold">Novo post</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border p-2">
+              {composerPreview &&
+                (composerFile?.type.startsWith("video") ? (
+                  <video src={composerPreview} controls className="mx-auto max-h-[60vh] rounded-md" />
+                ) : (
+                  <img src={composerPreview} alt="preview" className="mx-auto max-h-[60vh] rounded-md" />
+                ))}
+            </div>
+            <div className="flex flex-col gap-3">
+              <label className="text-sm font-medium">Caption (opcional)</label>
+              <textarea
+                value={composerCaption}
+                onChange={(e) => setComposerCaption(e.target.value)}
+                className="min-h-[120px] w-full rounded-lg border p-2 outline-none focus:ring"
+                placeholder="Escreva algo..."
+              />
+              <div className="mt-auto flex items-center justify-end gap-2">
+                <button
+                  className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+                  disabled={uploading}
+                  onClick={() => setComposerOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="rounded-lg bg-black px-4 py-1.5 text-white disabled:opacity-50"
+                  onClick={handleCreatePost}
+                  disabled={uploading}
+                >
+                  {uploading ? "Publicando…" : "Publicar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Post Modal */}
+      <Modal open={!!openPost} onClose={() => setOpenPost(null)}>
+        {openPost && (
+          <div className="grid gap-4 md:grid-cols-[1fr,380px]">
+            <div className="rounded-xl bg-black/5 p-2">
               {openPost.media_type === "video" ? (
-                <video src={openPost.media_url} className="w-full h-[420px] object-contain bg-black" controls />
+                <video src={openPost.media_url} controls className="mx-auto max-h-[70vh] rounded-md" />
               ) : (
-                <img src={openPost.media_url} className="w-full h-[420px] object-cover" />
+                <img src={openPost.media_url} className="mx-auto max-h-[70vh] rounded-md" alt="post" />
               )}
             </div>
-            <div className="p-4 flex flex-col h-[420px]">
-              {/* topo */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200">
-                    {openPost.author?.avatar_url ? (
-                      <img src={openPost.author.avatar_url} className="w-full h-full object-cover" />
-                    ) : null}
-                  </div>
-                  <div className="text-sm font-medium">@{openPost.author?.username || "user"}</div>
+            <div className="flex min-h-[300px] flex-col">
+              {/* Cabeçalho do autor */}
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={openPost.author?.avatar_url || "https://unavatar.io/github/placeholder"}
+                    className="h-8 w-8 rounded-full object-cover"
+                  />
+                  <div className="font-medium">@{openPost.author?.username || "username"}</div>
                 </div>
-                {user?.id === openPost.user_id && (
-                  <button onClick={() => deletePost(openPost.id)} className="text-red-500 text-sm">
+                {profile?.id === openPost.user_id && (
+                  <button className="text-sm text-red-500 hover:underline" onClick={() => deletePost(openPost.id)}>
                     Delete
                   </button>
                 )}
               </div>
 
-              {/* ações */}
-              <div className="flex items-center gap-5 text-gray-700">
+              {/* Ações */}
+              <div className="mb-3 flex items-center gap-4">
                 <button
-                  onClick={() => toggleLike(openPost)}
-                  className="flex items-center gap-1 hover:opacity-80 transition"
+                  onClick={() => toggleLike(openPost.id)}
+                  className={`text-lg ${openPost.likedByMe ? "text-red-500" : ""}`}
                 >
-                  <IconHeart /> {openPost.likes_count ?? 0}
+                  <IconHeart filled={openPost.likedByMe} /> {openPost.likeCount ?? 0}
                 </button>
-                <div className="flex items-center gap-1">
-                  <IconChat /> {openPost.comments_count ?? 0}
+                <div className="text-gray-600">
+                  <IconComment /> {openPost.commentCount ?? 0}
                 </div>
               </div>
 
-              {/* comentários */}
-              <div className="mt-3 flex-1 overflow-auto space-y-3">
-                {comments.length === 0 ? (
-                  <div className="text-sm text-gray-500">Be the first to comment</div>
-                ) : (
-                  comments.map((c) => (
-                    <div key={c.id} className="text-sm">
-                      <span className="font-medium">@{c.author?.username || "user"}</span>{" "}
-                      <span className="text-gray-700">{c.content}</span>
+              {/* Comentários */}
+              <div className="grow space-y-3 overflow-auto rounded-md border p-2">
+                {comments.length === 0 && <div className="text-sm text-gray-500">Be the first to comment</div>}
+                {comments.map((c) => (
+                  <div key={c.id} className="flex items-start gap-2">
+                    <img
+                      src={c.author?.avatar_url || "https://unavatar.io/github/placeholder"}
+                      className="mt-0.5 h-7 w-7 rounded-full object-cover"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm">
+                        <span className="font-medium mr-1">@{c.author?.username || "user"}</span>
+                        {c.content}
+                      </div>
+                      <div className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString()}</div>
                     </div>
-                  ))
-                )}
+                    {c.user_id === profile?.id && (
+                      <button
+                        className="text-xs text-red-500 hover:underline"
+                        onClick={() => deleteComment(c.id)}
+                        title="Apagar comentário"
+                      >
+                        apagar
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
 
-              {/* form comentário */}
+              {/* Caixa de comentário */}
               <div className="mt-3 flex items-center gap-2">
                 <input
-                  ref={commentInput}
-                  type="text"
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
                   placeholder="Write a comment..."
-                  className="flex-1 border rounded-md px-3 py-2 text-sm"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") sendComment();
-                  }}
+                  className="w-full rounded-lg border px-3 py-2 outline-none focus:ring"
                 />
                 <button
                   onClick={sendComment}
-                  disabled={sendingComment}
-                  className="px-3 py-2 text-sm rounded-md bg-black text-white disabled:opacity-60"
+                  disabled={savingComment || !newComment.trim()}
+                  className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-40"
                 >
                   Send
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    ) : null;
-
-  // ------------- Screens -------------
-  const ScreenHome = () => (
-    <div className="max-w-4xl mx-auto px-4 pb-28">
-      {loadingFeed ? (
-        <div className="py-20 text-center text-gray-500">Loading…</div>
-      ) : posts.length === 0 ? (
-        <div className="py-20 text-center text-gray-500">No posts yet</div>
-      ) : (
-        <div className="grid md:grid-cols-3 gap-6">
-          {posts.map((p) => (
-            <GridPost key={p.id} post={p} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const ScreenSearch = () => (
-    <div className="max-w-3xl mx-auto px-4 pb-28">
-      <div className="text-center text-gray-500 py-16">Search coming soon…</div>
-    </div>
-  );
-
-  const ScreenPost = () => (
-    <div className="max-w-md mx-auto px-4 pb-28">
-      {!user ? (
-        <div className="py-16 text-center">
-          <button onClick={signInWithGoogle} className="px-4 py-2 border rounded-md">
-            Sign in with Google
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium">Caption (optional)</span>
-            <input
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              className="mt-1 w-full border rounded-md px-3 py-2"
-              placeholder="Write something…"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium">Select image or video</span>
-            <input
-              type="file"
-              accept="image/*,video/*"
-              className="mt-1 block"
-              onChange={onUploadPost}
-              disabled={uploading}
-            />
-          </label>
-
-          {uploading && <div className="text-sm text-gray-500">Uploading…</div>}
-        </div>
-      )}
-    </div>
-  );
-
-  const ScreenProfile = () => (
-    <div className="max-w-4xl mx-auto px-4 pb-28">
-      {/* header do perfil */}
-      <div className="flex items-center gap-4 mb-6">
-        <div className="relative">
-          <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-200">
-            {me?.avatar_url ? (
-              <img src={me.avatar_url} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full grid place-content-center text-gray-500">IMG</div>
-            )}
-          </div>
-          {user && (
-            <label className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 rounded bg-black text-white cursor-pointer">
-              Change
-              <input type="file" accept="image/*" className="hidden" onChange={onUploadAvatar} />
-            </label>
-          )}
-        </div>
-        <div>
-          <div className="text-xl font-semibold">{me?.full_name || "Your name"}</div>
-          <div className="text-gray-500">@{me?.username || "username"}</div>
-        </div>
-      </div>
-
-      {/* meus posts */}
-      <div className="grid md:grid-cols-3 gap-6">
-        {posts.filter((p) => p.user_id === me?.id).map((p) => (
-          <div key={p.id}>
-            <GridPost post={p} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const BottomNav = () => (
-    <div className="fixed bottom-0 left-0 right-0 border-t bg-white">
-      <div className="max-w-4xl mx-auto px-8 h-14 flex items-center justify-between">
-        <button aria-label="Home" onClick={() => setActiveTab("home")}><IconHome active={activeTab === "home"} /></button>
-        <button aria-label="Search" onClick={() => setActiveTab("search")}><IconSearch active={activeTab === "search"} /></button>
-        <button aria-label="Post" onClick={() => setActiveTab("post")}><IconPlus active={activeTab === "post"} /></button>
-        <button aria-label="Profile" onClick={() => setActiveTab("profile")}><IconUser active={activeTab === "profile"} /></button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-white text-black">
-      <Header />
-
-      {activeTab === "home" && <ScreenHome />}
-      {activeTab === "search" && <ScreenSearch />}
-      {activeTab === "post" && <ScreenPost />}
-      {activeTab === "profile" && <ScreenProfile />}
-
-      <BottomNav />
-      <ModalPost />
+        )}
+      </Modal>
     </div>
   );
 }
