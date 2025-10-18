@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import { User } from "@supabase/supabase-js";
 import supabase from "./lib/supabaseClient";
 
-/* ========= Tipos ========= */
+/* =========================
+   Tipos
+========================= */
 type Profile = {
   id: string;
   full_name: string | null;
@@ -34,7 +36,9 @@ type Comment = {
   author?: Profile;
 };
 
-/* ========= Ícones (simples / leves) ========= */
+/* =========================
+   Ícones (simples / inline)
+========================= */
 function IconHeart({ filled }: { filled?: boolean }) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" className="inline-block align-[-2px]">
@@ -91,7 +95,9 @@ function IconUser({ active }: { active?: boolean }) {
   );
 }
 
-/* ========= Modal ========= */
+/* =========================
+   Modal base
+========================= */
 function Modal({ open, children, onClose }: { open: boolean; children: React.ReactNode; onClose: () => void }) {
   if (!open) return null;
   return createPortal(
@@ -105,7 +111,9 @@ function Modal({ open, children, onClose }: { open: boolean; children: React.Rea
   );
 }
 
-/* ========= App ========= */
+/* =========================
+   App
+========================= */
 export default function App() {
   // auth/profile
   const [user, setUser] = useState<User | null>(null);
@@ -115,59 +123,54 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(false);
 
+  // following / filtro do feed
+  const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [feedView, setFeedView] = useState<"following" | "all">("following");
+
   // UI
   const [tab, setTab] = useState<"home" | "search" | "post" | "profile">("home");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  // post modal
+  // Post modal
   const [openPost, setOpenPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [savingComment, setSavingComment] = useState(false);
 
-  // composer
+  // Composer (após escolher arquivo)
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerFile, setComposerFile] = useState<File | null>(null);
   const [composerPreview, setComposerPreview] = useState<string | null>(null);
   const [composerCaption, setComposerCaption] = useState("");
   const [uploading, setUploading] = useState(false);
 
-  // follow
-  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
-  const [followersCount, setFollowersCount] = useState<number>(0);
-  const [followingCount, setFollowingCount] = useState<number>(0);
-
-  // search
+  // Search
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
 
-  // feed toggle
-  const [followingOnly, setFollowingOnly] = useState<boolean>(false);
-
-  /* ===== Auth ===== */
+  /* ============ Auth ============ */
   useEffect(() => {
     const init = async () => {
       const { data } = await supabase.auth.getUser();
       setUser(data.user ?? null);
     };
     init();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // carrega profile, follows e feed
   useEffect(() => {
     if (!user) {
       setProfile(null);
       setPosts([]);
-      setFollowingIds(new Set());
-      setFollowersCount(0);
-      setFollowingCount(0);
+      setFollowingIds([]);
       return;
     }
-    const loadAll = async () => {
+    const load = async () => {
       // profile
       const { data: p } = await supabase
         .from("profiles")
@@ -189,51 +192,50 @@ export default function App() {
         setProfile(p);
       }
 
-      // follows (quem eu sigo + contadores)
-      const { data: f1 } = await supabase
+      // quem eu sigo
+      const { data: fRows, error: fErr } = await supabase
         .from("follows")
         .select("following_id")
         .eq("follower_id", user.id);
+      if (fErr) {
+        console.error(fErr);
+        setFollowingIds([]);
+      } else {
+        setFollowingIds((fRows ?? []).map((r) => r.following_id));
+      }
 
-      setFollowingIds(new Set((f1 ?? []).map((r: any) => r.following_id)));
-
-      const [{ count: followers = 0 }, { count: following = 0 }] = await Promise.all([
-        supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", user.id),
-        supabase.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", user.id),
-      ]);
-      setFollowersCount(followers);
-      setFollowingCount(following);
-
-      await refreshFeed();
+      // feed default em "following"
+      await refreshFeed("following");
     };
-    loadAll();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Recarrega feed quando o filtro de Following mudar
-  useEffect(() => {
-    if (user) refreshFeed();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [followingOnly, followingIds]);
-
-  /* ===== Feed ===== */
-  const refreshFeed = async () => {
+  /* ============ Feed (com escopo) ============ */
+  const refreshFeed = async (scope: "following" | "all" = feedView) => {
     setLoadingFeed(true);
     try {
-      const { data: rows, error } = await supabase
+      let query = supabase
         .from("posts")
         .select("id,user_id,media_url,media_type,caption,created_at")
         .order("created_at", { ascending: false });
+
+      if (scope === "following") {
+        if (followingIds.length === 0) {
+          setPosts([]);
+          setLoadingFeed(false);
+          return;
+        }
+        query = query.in(
+          "user_id",
+          followingIds.length ? followingIds : ["00000000-0000-0000-0000-000000000000"]
+        );
+      }
+
+      const { data: rows, error } = await query;
       if (error) throw error;
 
-      let list: Post[] = rows ?? [];
-
-      // filtro: Following
-      if (followingOnly && profile) {
-        const allow = new Set(followingIds);
-        allow.add(profile.id);
-        list = list.filter((p) => allow.has(p.user_id));
-      }
+      const list: Post[] = rows ?? [];
 
       // autores
       const userIds = Array.from(new Set(list.map((p) => p.user_id)));
@@ -253,18 +255,18 @@ export default function App() {
         .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
       const likeCount = new Map<string, number>();
       const likedByMe = new Set<string>();
-      (likeRows ?? []).forEach((r: any) => {
+      (likeRows ?? []).forEach((r) => {
         likeCount.set(r.post_id, (likeCount.get(r.post_id) ?? 0) + 1);
         if (r.user_id === profile?.id) likedByMe.add(r.post_id);
       });
 
-      // comments (apenas contagem)
+      // comments
       const { data: commentRows } = await supabase
         .from("comments")
         .select("post_id")
         .in("post_id", postIds.length ? postIds : ["00000000-0000-0000-0000-000000000000"]);
       const commentCount = new Map<string, number>();
-      (commentRows ?? []).forEach((r: any) => {
+      (commentRows ?? []).forEach((r) => {
         commentCount.set(r.post_id, (commentCount.get(r.post_id) ?? 0) + 1);
       });
 
@@ -282,17 +284,20 @@ export default function App() {
     }
   };
 
-  /* ===== Auth actions ===== */
+  /* ============ Auth actions ============ */
   const handleLogin = async () => {
     const redirectTo = window.location.origin;
-    await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo } });
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
   };
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setTab("home");
   };
 
-  /* ===== Avatar ===== */
+  /* ============ Avatar ============ */
   const handleAvatarButton = () => {
     if (!user) return;
     avatarInputRef.current?.click();
@@ -320,12 +325,14 @@ export default function App() {
     }
   };
 
-  /* ===== Upload de post ===== */
+  /* ============ Upload de post (via +) ============ */
   const handlePlusClick = () => {
-    if (!user) { handleLogin(); return; }
+    if (!user) {
+      handleLogin();
+      return;
+    }
     fileInputRef.current?.click();
   };
-
   const handlePickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] || null;
     if (!f) return;
@@ -336,7 +343,6 @@ export default function App() {
     setComposerOpen(true);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-
   const handleCreatePost = async () => {
     if (!composerFile || !profile) return;
     setUploading(true);
@@ -379,7 +385,7 @@ export default function App() {
     }
   };
 
-  /* ===== Likes ===== */
+  /* ============ Likes ============ */
   const toggleLike = async (postId: string) => {
     if (!profile) return;
     const target = posts.find((p) => p.id === postId);
@@ -411,7 +417,7 @@ export default function App() {
     }
   };
 
-  /* ===== Comments ===== */
+  /* ============ Comments ============ */
   const openPostModal = async (post: Post) => {
     setOpenPost(post);
     setComments([]);
@@ -455,6 +461,7 @@ export default function App() {
       const created = rows?.[0] as Comment;
       created.author = { ...profile };
       setComments((prev) => [...prev, created]);
+
       setPosts((prev) => prev.map((p) => (p.id === openPost.id ? { ...p, commentCount: (p.commentCount ?? 0) + 1 } : p)));
     } catch (err) {
       console.error(err);
@@ -468,7 +475,7 @@ export default function App() {
     if (!profile || !openPost) return;
     const c = comments.find((x) => x.id === commentId);
     if (!c || c.user_id !== profile.id) return;
-    const ok = confirm("Delete this comment?");
+    const ok = confirm("Delete comment?");
     if (!ok) return;
 
     setComments((prev) => prev.filter((x) => x.id !== commentId));
@@ -484,50 +491,89 @@ export default function App() {
     }
   };
 
-  /* ===== Follow ===== */
-  const toggleFollow = async (targetUserId: string) => {
-    if (!profile || targetUserId === profile.id) return;
-    const isFollowing = followingIds.has(targetUserId);
+  /* ============ Delete post ============ */
+  const deletePost = async (postId: string) => {
+    if (!profile) return;
+    const p = posts.find((x) => x.id === postId);
+    if (!p || p.user_id !== profile.id) return;
+    const ok = confirm("Apagar este post?");
+    if (!ok) return;
 
-    // otimista
-    setFollowingIds((prev) => {
-      const next = new Set(prev);
-      if (isFollowing) next.delete(targetUserId);
-      else next.add(targetUserId);
-      return next;
-    });
-    setFollowingCount((n) => n + (isFollowing ? -1 : 1));
+    setPosts((prev) => prev.filter((x) => x.id !== postId));
+    setOpenPost(null);
 
     try {
-      if (isFollowing) {
+      const { error } = await supabase.from("posts").delete().eq("id", postId).eq("user_id", profile.id);
+      if (error) throw error;
+    } catch (err) {
+      alert("Não foi possível apagar");
+      console.error(err);
+      refreshFeed();
+    }
+  };
+
+  /* ============ Search & Follow ============ */
+  const runSearch = async (q: string) => {
+    setSearchQuery(q);
+    if (!q.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, full_name, username, avatar_url")
+        .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
+        .limit(20);
+      setSearchResults((data ?? []).filter((u) => u.id !== profile?.id));
+    } catch (e) {
+      console.error(e);
+      setSearchResults([]);
+    }
+  };
+
+  const isFollowing = (userId: string) => followingIds.includes(userId);
+
+  const toggleFollow = async (targetId: string) => {
+    if (!profile || targetId === profile.id) return;
+    const currently = isFollowing(targetId);
+
+    // otimista
+    setFollowingIds((prev) =>
+      currently ? prev.filter((id) => id !== targetId) : [...prev, targetId]
+    );
+
+    try {
+      if (currently) {
         const { error } = await supabase
           .from("follows")
           .delete()
           .eq("follower_id", profile.id)
-          .eq("following_id", targetUserId);
+          .eq("following_id", targetId);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from("follows")
-          .insert({ follower_id: profile.id, following_id: targetUserId });
+          .insert({ follower_id: profile.id, following_id: targetId });
         if (error) throw error;
       }
+      // se estou vendo "following", atualiza feed
+      if (feedView === "following") {
+        await refreshFeed("following");
+      }
     } catch (err) {
-      // rollback
-      setFollowingIds((prev) => {
-        const next = new Set(prev);
-        if (isFollowing) next.add(targetUserId);
-        else next.delete(targetUserId);
-        return next;
-      });
-      setFollowingCount((n) => n + (isFollowing ? 1 : -1));
-      alert("Não foi possível atualizar follow");
+      // rollback simples
+      setFollowingIds((prev) =>
+        currently ? [...prev, targetId] : prev.filter((id) => id !== targetId)
+      );
       console.error(err);
+      alert("Não foi possível atualizar follow");
     }
   };
 
-  /* ===== Computados ===== */
+  /* ============ Computados ============ */
   const isLogged = !!user && !!profile;
+
   const headerProfile = useMemo(() => {
     if (!profile) return null;
     return (
@@ -545,7 +591,7 @@ export default function App() {
     );
   }, [profile]);
 
-  /* ===== Render ===== */
+  /* ============ Render ============ */
   return (
     <div className="mx-auto max-w-4xl px-4 pb-20">
       <header className="flex items-center justify-between py-4">
@@ -567,24 +613,28 @@ export default function App() {
       {/* HOME */}
       {tab === "home" && (
         <section>
-          {/* Toggle All | Following */}
+          {/* Toggle Following | All */}
           <div className="mb-4 flex gap-2">
             <button
-              className={`rounded-full px-3 py-1 text-sm border ${!followingOnly ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setFollowingOnly(false)}
-            >
-              All
-            </button>
-            <button
-              className={`rounded-full px-3 py-1 text-sm border ${followingOnly ? "bg-black text-white" : "bg-white"}`}
-              onClick={() => setFollowingOnly(true)}
+              onClick={() => { setFeedView("following"); refreshFeed("following"); }}
+              className={`rounded-full border px-3 py-1 text-sm ${feedView === "following" ? "bg-black text-white" : "bg-white"}`}
             >
               Following
+            </button>
+            <button
+              onClick={() => { setFeedView("all"); refreshFeed("all"); }}
+              className={`rounded-full border px-3 py-1 text-sm ${feedView === "all" ? "bg-black text-white" : "bg-white"}`}
+            >
+              All
             </button>
           </div>
 
           {loadingFeed && <div className="py-6 text-center text-gray-500">Carregando…</div>}
-          {!loadingFeed && posts.length === 0 && <div className="py-8 text-center text-gray-500">Sem posts ainda.</div>}
+          {!loadingFeed && posts.length === 0 && (
+            <div className="py-8 text-center text-gray-500">
+              {feedView === "following" ? "Ainda não há posts das contas que você segue." : "Sem posts ainda."}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
             {posts.map((post) => (
@@ -627,26 +677,14 @@ export default function App() {
 
       {/* SEARCH */}
       {tab === "search" && (
-        <section className="mx-auto max-w-2xl py-6">
+        <section className="max-w-2xl mx-auto">
           <input
             value={searchQuery}
-            onChange={async (e) => {
-              const q = e.target.value;
-              setSearchQuery(q);
-              if (!q.trim()) {
-                setSearchResults([]);
-                return;
-              }
-              const { data } = await supabase
-                .from("profiles")
-                .select("id, username, full_name, avatar_url")
-                .ilike("username", `%${q}%`);
-              setSearchResults((data ?? []) as Profile[]);
-            }}
-            className="w-full rounded-lg border px-3 py-2 outline-none focus:ring"
-            placeholder="Search username…"
+            onChange={(e) => runSearch(e.target.value)}
+            placeholder="Search users…"
+            className="mb-4 w-full rounded-lg border px-4 py-2 outline-none focus:ring"
           />
-          <div className="mt-4 space-y-3">
+          <div className="space-y-3">
             {searchResults.map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded-xl border p-3">
                 <div className="flex items-center gap-3">
@@ -659,18 +697,18 @@ export default function App() {
                     <div className="text-sm text-gray-500">@{u.username || "username"}</div>
                   </div>
                 </div>
-                {profile?.id !== u.id && (
-                  <button
-                    onClick={() => toggleFollow(u.id)}
-                    className={`rounded-lg px-3 py-1.5 border ${followingIds.has(u.id) ? "bg-gray-100" : "bg-black text-white"}`}
-                  >
-                    {followingIds.has(u.id) ? "Following" : "Follow"}
-                  </button>
-                )}
+                <button
+                  onClick={() => toggleFollow(u.id)}
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    isFollowing(u.id) ? "bg-black text-white" : "bg-white"
+                  }`}
+                >
+                  {isFollowing(u.id) ? "Following" : "Follow"}
+                </button>
               </div>
             ))}
             {searchQuery && searchResults.length === 0 && (
-              <div className="text-center text-gray-500">No users found.</div>
+              <div className="text-center text-gray-500 py-8">No users found.</div>
             )}
           </div>
         </section>
@@ -696,19 +734,16 @@ export default function App() {
             <div>
               <div className="text-xl font-semibold">{profile?.full_name || "Your name"}</div>
               <div className="text-gray-500">@{profile?.username || "username"}</div>
-              <div className="mt-1 text-sm text-gray-600">
-                {followersCount} followers · {followingCount} following
-              </div>
               <button
                 className="mt-2 rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
-                onClick={() => alert("Profile editing soon")}
+                onClick={() => alert("Tela de edição do perfil virá depois")}
               >
                 Edit profile
               </button>
             </div>
           </div>
 
-          {/* seus posts */}
+          {/* Seus posts */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
             {posts
               .filter((p) => p.user_id === profile?.id)
@@ -752,7 +787,7 @@ export default function App() {
             <IconSearch active={tab === "search"} />
           </button>
           <button onClick={handlePlusClick} aria-label="New post">
-            <IconPlus />
+            <IconPlus active={false} />
           </button>
           <button onClick={() => (isLogged ? setTab("profile") : handleLogin())} aria-label="Profile">
             <IconUser active={tab === "profile"} />
@@ -780,7 +815,7 @@ export default function App() {
       {/* Composer */}
       <Modal open={composerOpen} onClose={() => !uploading && setComposerOpen(false)}>
         <div className="flex flex-col gap-4">
-          <div className="text-lg font-semibold">New post</div>
+          <div className="text-lg font-semibold">Novo post</div>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-xl border p-2">
               {composerPreview &&
@@ -791,12 +826,12 @@ export default function App() {
                 ))}
             </div>
             <div className="flex flex-col gap-3">
-              <label className="text-sm font-medium">Caption (optional)</label>
+              <label className="text-sm font-medium">Caption (opcional)</label>
               <textarea
                 value={composerCaption}
                 onChange={(e) => setComposerCaption(e.target.value)}
                 className="min-h-[120px] w-full rounded-lg border p-2 outline-none focus:ring"
-                placeholder="Say something..."
+                placeholder="Escreva algo..."
               />
               <div className="mt-auto flex items-center justify-end gap-2">
                 <button
@@ -804,14 +839,14 @@ export default function App() {
                   disabled={uploading}
                   onClick={() => setComposerOpen(false)}
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   className="rounded-lg bg-black px-4 py-1.5 text-white disabled:opacity-50"
                   onClick={handleCreatePost}
                   disabled={uploading}
                 >
-                  {uploading ? "Publishing…" : "Publish"}
+                  {uploading ? "Publicando…" : "Publicar"}
                 </button>
               </div>
             </div>
@@ -831,7 +866,7 @@ export default function App() {
               )}
             </div>
             <div className="flex min-h-[300px] flex-col">
-              {/* header */}
+              {/* Cabeçalho do autor */}
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <img
@@ -847,7 +882,7 @@ export default function App() {
                 )}
               </div>
 
-              {/* actions */}
+              {/* Ações */}
               <div className="mb-3 flex items-center gap-4">
                 <button
                   onClick={() => toggleLike(openPost.id)}
@@ -860,7 +895,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* comments */}
+              {/* Comentários */}
               <div className="grow space-y-3 overflow-auto rounded-md border p-2">
                 {comments.length === 0 && <div className="text-sm text-gray-500">Be the first to comment</div>}
                 {comments.map((c) => (
@@ -871,7 +906,7 @@ export default function App() {
                     />
                     <div className="flex-1">
                       <div className="text-sm">
-                        <span className="mr-1 font-medium">@{c.author?.username || "user"}</span>
+                        <span className="font-medium mr-1">@{c.author?.username || "user"}</span>
                         {c.content}
                       </div>
                     </div>
@@ -888,7 +923,7 @@ export default function App() {
                 ))}
               </div>
 
-              {/* add comment */}
+              {/* Caixa de comentário */}
               <div className="mt-3 flex items-center gap-2">
                 <input
                   value={newComment}
